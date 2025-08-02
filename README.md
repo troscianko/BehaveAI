@@ -2,23 +2,26 @@
 
 The BehaveAI framework converts motion information into false colours that allow both the human annotator and convolutional neural net (CNN) to easily identify patterns of movement. In addition, the framework integrates conventional static information, allowing both motion streams and static streams to be combined (in a similar fashion to the mammalian visual system). Additionally the framework supports hierarchical models (e.g. detect something from it's movement, then work out what exactly it is from conventional static appearance, or vice-versa); and semi-supervised annotation, allowing the annotator to correct errors made by initial models, making for a more efficient and effective training process.
 
-## Prerequisites
+## Prerequisites & Installation
 
-You need a python3 environment with OpenCV and Ultralytics (YOLO), plus a few other standard libraries (numpy, etc...)
+You need a python3 environment with OpenCV and Ultralytics (YOLO) libraries, plus a few other standard libraries (numpy, etc...)
  
-You only need three files - the annotation script, the classification script, and the settings ini file. First, create a working directory, add these three files, and adjust the settings .ini file to your needs (see below). For convenience, also add your video files to a subdirectory here.
+You only need three files - the annotation script (BehaveAI_annotation.py), the classification script (BehaveAI_classify_track.py), and the settings ini file (BehaveAI_settings.ini - don't change this filename). First, create a working directory, add these three files, and adjust the settings .ini file to your needs (see below). For convenience, also add your video files to a subdirectory here.
  
 ## Setting Parameters
 
-You need to adjust the BehaveAI_settings.ini file with your settings. Have a read through the descriptions in the file itself to see what each parameter controls. Note that each class needs an associated keyboard hotkey and colour or it'll throw an error - see the existing format. You can chose betwen YOLO versions (e.g. v8 or v11), and different model sizes (n=nano, s=small etc...). You can also specify what proportion of annotations should be automatically allocated to validation (you can mode the files around later if you'd like though).
+You need to adjust the BehaveAI_settings.ini file with your settings. Have a read through the descriptions in the file itself to see what each parameter controls. Note that each class needs an associated keyboard hotkey and colour or it'll throw an error - see the existing format. You can chose betwen YOLO versions (e.g. v8 or v11), and different model sizes (n=nano, s=small etc...). You can also specify what proportion of annotations should be automatically allocated to validation (you can manually move the files around later if you'd like though - just be sure to move both images and labels between the 'train' and 'val' subdirectories).
 
 ### Primary and secondary, static and motion classifiers
 
-Primary classifiers (either motion or static) detect and classify objects across each whole frame. You can mix motion and static in whatever combination you want, the aim here is to make detection as easy as possible for the classifier (some things are easy to see with motion, others static).
+The BehaveAI framework uses to streams of video informaiton, still (static) frames, and false-colour-motion (motion) frames Primary classifiers (either motion or static) detect and classify objects across each whole frame. You must specify at least one primary classifier, but can specify multiple across both motion and staic streams. The aim here is to make detection as easy as possible for the classifier (some things are easy to see with motion, others static).
  
 You can optionally then use secondary classifiers (making your model hierarchical). When you specify these, anything found by a primary classifier will be cropped and sent to the secondary classifier. This can allow you to separate the tasks of detection and classification. See the fly and gull examples for a somewhat complex mix. There are more nuanced settings too. You might not want all primary classes to be sent to the secondary classifier, such as a fly in flight (its wings are a blur, so it's not possible to determine the sex, so flying flies are ignored by the secondary classifiers ).
 
 ### Motion strategy
+
+![motion_strategy](https://github.com/user-attachments/assets/7b285c01-e152-4ece-b94a-d026f1e5e5b6)
+
 
 Two different user-selectable motion strategies are available; the ‘exponential’ method calculates the absolute difference between the current frame and the previous frames, exponentially smoothing over successive frames to show different temporal ranges in different colour channels. With this mode, a moving object creates a white ‘difference’ image that leaves behind a motion blur that fades from white to blue, to green, to red. Increasing the exponential smoothing weights allows this method to show events further back in time at no extra computational processing or memory costs when running the classifier because there is no need to re-load any previous frames. This mode is better able to convey changes in speed within each frame; accelerating objects will outpace their red tail, creating a blue-to-green streak, while deceleration will allow the red tail to catch up, creating yellow-to-red tails. The ‘sequential’ method uses discrete frames rather than exponential smoothing, with colours coding the differences between the previous 3 frames (white, blue, green and red going back through time respectively), and is suited to classifying movements over this short range of frames and preserve more spatial information from previous frames (e.g. rather than a smooth tail, an animal’s characteristic wing shapes will remain visible over all four frames). The motion false colour is then optionally blended with the luminance channel to provide greater context – combining motion information with static luminance. The exponential weightings, false-colour composition, and degree of luminance blending are all user-adjustable. Frame skipping can also be used to perform measurements over a larger number of frames (longer time-span) at no additional processing costs (e.g. suited to slow-moving objects whose behaviour is more apparent form faster video playback).
  
