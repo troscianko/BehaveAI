@@ -6,7 +6,7 @@ The BehaveAI framework converts motion information into false colours that allow
 
 You need a python3 environment with OpenCV and Ultralytics (YOLO) libraries, plus a few other standard libraries (numpy, etc...)
  
-You only need three files - the annotation script (BehaveAI_annotation.py), the classification script (BehaveAI_classify_track.py), and the settings ini file (BehaveAI_settings.ini - don't change this filename). First, create a working directory, add these three files, and adjust the settings .ini file to your needs (see below). For convenience, also add your video files to a subdirectory here.
+You only need three files - the annotation script (_BehaveAI_annotation.py_), the classification script (_BehaveAI_classify_track.py_), and the settings ini file (_BehaveAI_settings.ini_ - it must have this filename to work). First, create a working directory, add these three files, and adjust the settings .ini file to your needs (see below). For convenience, also add your video files to a subdirectory here.
  
 ## Setting Parameters
 
@@ -14,7 +14,7 @@ You need to adjust the BehaveAI_settings.ini file with your settings. Have a rea
 
 ### Primary and secondary, static and motion classifiers
 
-The BehaveAI framework uses to streams of video informaiton, still (static) frames, and false-colour-motion (motion) frames Primary classifiers (either motion or static) detect and classify objects across each whole frame. You must specify at least one primary classifier, but can specify multiple across both motion and staic streams. The aim here is to make detection as easy as possible for the classifier (some things are easy to see with motion, others static).
+The BehaveAI framework uses to streams of video informaiton, still (_static_) frames, and false-colour-motion (_motion_) frames Primary classifiers (either motion or static) detect and classify objects across each whole frame. You must specify at least one primary classifier, but can specify multiple across both motion and staic streams. The aim here is to make detection as easy as possible for the classifier (some things are easy to see with motion, others static).
  
 You can optionally then use secondary classifiers (making your model hierarchical). When you specify these, anything found by a primary classifier will be cropped and sent to the secondary classifier. This can allow you to separate the tasks of detection and classification. See the fly and gull examples for a somewhat complex mix. There are more nuanced settings too. You might not want all primary classes to be sent to the secondary classifier, such as a fly in flight (its wings are a blur, so it's not possible to determine the sex, so flying flies are ignored by the secondary classifiers ).
 
@@ -23,21 +23,25 @@ You can optionally then use secondary classifiers (making your model hierarchica
 ![motion_strategy](https://github.com/user-attachments/assets/7b285c01-e152-4ece-b94a-d026f1e5e5b6)
 
 
-Two different user-selectable motion strategies are available; the ‘exponential’ method calculates the absolute difference between the current frame and the previous frames, exponentially smoothing over successive frames to show different temporal ranges in different colour channels. With this mode, a moving object creates a white ‘difference’ image that leaves behind a motion blur that fades from white to blue, to green, to red. Increasing the exponential smoothing weights allows this method to show events further back in time at no extra computational processing or memory costs when running the classifier because there is no need to re-load any previous frames. This mode is better able to convey changes in speed within each frame; accelerating objects will outpace their red tail, creating a blue-to-green streak, while deceleration will allow the red tail to catch up, creating yellow-to-red tails. The ‘sequential’ method uses discrete frames rather than exponential smoothing, with colours coding the differences between the previous 3 frames (white, blue, green and red going back through time respectively), and is suited to classifying movements over this short range of frames and preserve more spatial information from previous frames (e.g. rather than a smooth tail, an animal’s characteristic wing shapes will remain visible over all four frames). The motion false colour is then optionally blended with the luminance channel to provide greater context – combining motion information with static luminance. The exponential weightings, false-colour composition, and degree of luminance blending are all user-adjustable. Frame skipping can also be used to perform measurements over a larger number of frames (longer time-span) at no additional processing costs (e.g. suited to slow-moving objects whose behaviour is more apparent form faster video playback).
+Two different user-selectable motion strategies are available; the ‘_exponential_’ method calculates the absolute difference between the current frame and the previous frames, exponentially smoothing over successive frames to show different temporal ranges in different colour channels. With this mode, a moving object creates a white ‘difference’ image that leaves behind a motion blur that fades from white to blue, to green, to red. Increasing the exponential smoothing weights allows this method to show events further back in time at no extra computational processing or memory costs when running the classifier because there is no need to re-load any previous frames. This mode is better able to convey changes in speed within each frame; accelerating objects will outpace their red tail, creating a blue-to-green streak, while deceleration will allow the red tail to catch up, creating yellow-to-red tails.
+
+The ‘_sequential_’ method uses discrete frames rather than exponential smoothing, with colours coding the differences between the previous 3 frames (white, blue, green and red going back through time respectively), and is suited to classifying movements over this short range of frames and preserve more spatial information from previous frames (e.g. rather than a smooth tail, an animal’s characteristic wing shapes will remain visible over all four frames). The motion false colour is then optionally blended with the luminance channel to provide greater context – combining motion information with static luminance. The exponential weightings, false-colour composition, and degree of luminance blending are all user-adjustable. Frame skipping can also be used to perform measurements over a larger number of frames (longer time-span) at no additional processing costs (e.g. suited to slow-moving objects whose behaviour is more apparent form faster video playback).
  
 ## Annotating
 
 ### Keyboard shortcuts:
 
-| Key | Function |
+| Key/button | Function |
 |----|----|
-| User-selected keys (specified in settings file) |  Primary or secondary class |
+| Mouse left-click | Draw annotation using the currently selected class |
+| Mouse right-click | Delete annotation or grey box |
+| User-selected keys (specified in settings file) |  Select the current primary or secondary class |
 | Space | Switch between static and motion view |
-| Enter | Save current frame's annotations |
-| G | Draw a grey box to hide elements |
-| U | Undo last annotation (in annotation or grey box mode). Note that right-click also deletes annotations 
-| Right | Next frame |
-| Left | Previous frame |
+| Enter | **Save current frame's annotations** - _moving frame before pressing enter will clear any annotations_ |
+| G | Draw a grey box to hide elements from training (e.g. when you're not sure and don't want to confuse the classifier either way) |
+| U | Undo last annotation (in annotation or grey box mode). Note that right-click also deletes annotations. You can also search the annotation directories (based on video name and frame number) to manually delete images and labels later if you make mistakes |
+| Right arrow | Next frame |
+| Left arrow | Previous frame |
 | > | Jump forward 10 frames |
 | < | Jump backwards 10 frames |
 | Escape | Exit annotation |
@@ -54,13 +58,13 @@ The aim is to build up an annotation dataset for initial model training, so focu
 50-100 annotations of each class should be sufficient to run a quick initial model. This can be done in under 20 minutes for a simple, single class.
  
 ## Building & running the initial model
-Once you've got an initial annotation dataset, run the BehaveAI_classify_track.py script. This will automatically start training the models from your initial annotation files. At this stage, with a small annotation set it should be quite fast. This will create an initial model, and you can see that the model and the YOLO performance data are placed into a new directory in your working directory. Have a look at the output and don't worry if it's not performing amazingly at this stage.
+Once you've got an initial annotation dataset (e.g. 50-100 annotations drawn), run the BehaveAI_classify_track.py script. This will automatically start training the models from your initial annotation files. At this stage, with a small annotation set it should be quite fast. This will create an initial model, and you can see that the model and the YOLO performance data are placed into a new directory in your working directory. Have a look at the output and don't worry if it's not performing amazingly at this stage.
 
 ## Auto-Annotation
 
 Once you've trained an initial model the annotation script it will use this in a semi-supervised 'auto-annotation' fashion, attempting to detect and classify things as you annotate. This will show you where the model is working well, and where it's not (closing the training loop). Use this opportunity to correct any errors it's making. e.g. add things it missed (false negatives), redraw boundaries, correct classes etc... importantly you can also add plain background frames (with nothing annotated) in cases where it's making false positive errors. Also focus on those borderline cases whether the model isn't confident (it shows you the confidence). Remember to press 'enter' as before to save a new annotation frame. Aim to increase your annotation set - perhaps doubling the size. Now re-run the BehaveAI_classify_track.py script and it will note that you've added more annotations and ask whether you want to re-train the model. Select 'y' (yes) and it will do so. You can repeat this auto-annotation cycle until you achieve the model performance and versatility required, helping to avoid annotating more than necessary, and also avoiding over-fitting.
 
-If you'd prefer to train the model from scratch rather than retrain your existing model (perhaps also switching between different YOLO version and model sizes), simply move or rename the relevant model directories, adjust the ini settings and re-run the script. Old models are kept as backups, so nothing should be lost. Note that you must not change the motion parameters after building our annotation set; annotations are saved only with the current setting and cannot be altered afterwards.
+If you'd prefer to train the model from scratch rather than retrain your existing model (perhaps also switching between different YOLO version and model sizes), simply move or rename the relevant model directories, adjust the ini settings and re-run the script. Old models are kept as backups, so nothing should be lost. Note that you must not change the motion parameters in the ini file after building our annotation set; annotations are saved only with the current setting and cannot be altered afterwards.
 
 ## Batch processing
 
