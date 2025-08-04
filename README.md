@@ -1,4 +1,7 @@
-# Framework for detecting, classifying and tracking moving objects
+<img width="300" height="93" alt="BehaveAI logo" src="https://github.com/user-attachments/assets/3bc5d676-1d58-432f-9a59-b027cb6b5557" />
+
+# A Framework for detecting, classifying and tracking moving objects
+
 
 The BehaveAI framework converts motion information into false colours that allow both the human annotator and convolutional neural net (CNN) to easily identify patterns of movement. In addition, the framework integrates conventional static information, allowing both motion streams and static streams to be combined (in a similar fashion to the mammalian visual system). Additionally the framework supports hierarchical models (e.g. detect something from it's movement, then work out what exactly it is from conventional static appearance, or vice-versa); and semi-supervised annotation, allowing the annotator to correct errors made by initial models, making for a more efficient and effective training process.
 
@@ -20,22 +23,22 @@ You can optionally then use secondary classifiers (making your model hierarchica
 
 ### Motion strategy
 
-![motion_strategy](https://github.com/user-attachments/assets/7b285c01-e152-4ece-b94a-d026f1e5e5b6)
+<img src="https://github.com/user-attachments/assets/46c94f90-5102-466b-91dc-a38d56f3c2dc" width="400"/>
 
+_Figure showing the different motion strategies (exponential vs sequential), plus the function of lum_weight and skip_frames, of a gull taking flight_
 
 Two different user-selectable motion strategies are available; the ‘_exponential_’ method calculates the absolute difference between the current frame and the previous frames, exponentially smoothing over successive frames to show different temporal ranges in different colour channels. With this mode, a moving object creates a white ‘difference’ image that leaves behind a motion blur that fades from white to blue, to green, to red. Increasing the exponential smoothing weights allows this method to show events further back in time at no extra computational processing or memory costs when running the classifier because there is no need to re-load any previous frames. This mode is better able to convey changes in speed within each frame; accelerating objects will outpace their red tail, creating a blue-to-green streak, while deceleration will allow the red tail to catch up, creating yellow-to-red tails.
 
 The ‘_sequential_’ method uses discrete frames rather than exponential smoothing, with colours coding the differences between the previous 3 frames (white, blue, green and red going back through time respectively), and is suited to classifying movements over this short range of frames and preserve more spatial information from previous frames (e.g. rather than a smooth tail, an animal’s characteristic wing shapes will remain visible over all four frames). The motion false colour is then optionally blended with the luminance channel to provide greater context – combining motion information with static luminance. The exponential weightings, false-colour composition, and degree of luminance blending are all user-adjustable. Frame skipping can also be used to perform measurements over a larger number of frames (longer time-span) at no additional processing costs (e.g. suited to slow-moving objects whose behaviour is more apparent form faster video playback).
 
 ### Parameters
-
-![gull_settings_example](https://github.com/user-attachments/assets/46c94f90-5102-466b-91dc-a38d56f3c2dc)
+TLDR: The only things you really must change to fit your project are the primary and secondary classes (and each needs keys and colours associated). Have a look at the motion in your examples and consider tweaking the strategy. The defaults for everything else will likely get you started. Other than tracking and Kalman filter settings you can't change the values mid-way through annotation though. 
 
 | Parameter | Range | Description |
 |----|----|----|
 | [...]_classes | Comma-separated list (0=ignore) | List the names of the classifiers (motion & static, primary & secondary) |
-| [...]_colors | Comma-separated RGB values, separated with semicolons | Specify the RGB colours associated with each class |
-| [...]_hotkeys | Comma-separated list of single letters | Specify which keyboard key to associate with each class for annotation |
+| [...]_colors | Comma-separated RGB values, separated with semicolons (0=ignore) | Specify the RGB colours associated with each class |
+| [...]_hotkeys | Comma-separated list of single letters (0=ignore) | Specify which keyboard key to associate with each class for annotation |
 | ignore_secondary | Comma-separated list matching class names | Specify any classes that should be excluded from secondary classification |
 | save_empty_frames | _true_ or _false_ | If true, pressing enter saves frames with no annotations |
 | dominant_source | _confidence_, _static_, or _motion_ | Specifies which source should be given priority in video output classification (both are saved in the output .csv file) |
@@ -65,7 +68,19 @@ The ‘_sequential_’ method uses discrete frames rather than exponential smoot
 
 ## Annotating
 
-### Keyboard shortcuts:
+<img width="2245" height="1138" alt="image" src="https://github.com/user-attachments/assets/fe5d2d01-6092-44a7-a0e4-0da7cae85dff" />
+
+_Screenshot of the annotation GUI. The main window currently shows the motion image. The right-hand bar shows a zoom view of the current cursor position in static (top right) and motion streams (middle right), and also shows an animation of the video (bottom right). The bar at the bottom of the screen highlights the available primary (upper case) and secondary (lower case) classes, together with their associated keys. The trackbar at the bottom of the screen allows seeking through the video_
+
+Run the BehaveAI_annotation.py script and select a video (to run a python script, either call the file from a command line, or use an IDE such as Anaconda or Geany). You can track through and draw boxes over the things you want to classify. Note all the keyboard shortcuts. It has undo functions, grey-out functions, track single or 10-frame jumps etc... plus all the primary and secondary classes. With each frame, make sure you select (or grey out) everything. Press 'enter' to save the frame and move on.
+ 
+Move through your videos, avoiding annotating the same thing over and over again (to avoid over-fitting, focus on variation). Remember that each frame you add to the annotation dataset (by pressing 'enter') must have **everything** annotated that should be classified. e.g. missing something out will confuse the training. You'll likely encounter cases where you're not sure how to classify something. These borderline cases can be important to help training the model, but if you don't want to add it, draw a grey box over the confusing element (e.g. the target is occluded so you can't tell what it's doing). Try to get the annotation selection box neatly to the edges of the target. Remember that the size and shape of the box might need to vary between motion and static modes (e.g. a flying fly takes up a large box in motion mode compared to static due to its rainbow motion tail). 
+ 
+The aim is to build up an annotation dataset for initial model training, so focus on getting a broad range of backgrounds, contexts etc... Also think about those transition points where one behaviour is turning into another (e.g. switching from walking to flying). Have a clear rule-set in your head when annotating so you can tell what every frame should be (remember, if you can't do this, the CNN will struggle too). With a bit of practice the false colour motion tails will tell you exactly what the target was doing over the previous frames and you'll gain confidence in reading these cues.
+ 
+50-100 annotations of each class should be sufficient to run a quick initial model. This can be done in under 20 minutes for a simple, single class.
+
+### Annotation keyboard shortcuts:
 
 | Key/button | Function |
 |----|----|
@@ -74,6 +89,7 @@ The ‘_sequential_’ method uses discrete frames rather than exponential smoot
 | User-selected keys (specified in settings file) |  Select the current primary or secondary class |
 | Space | Switch between static and motion view |
 | Enter | **Save current frame's annotations** - _moving frame before pressing enter will clear any annotations_ |
+| Backspace | Clear all annotations in current frame |
 | G | Draw a grey box to hide elements from training (e.g. when you're not sure and don't want to confuse the classifier either way) |
 | U | Undo last annotation (in annotation or grey box mode). Note that right-click also deletes annotations. You can also search the annotation directories (based on video name and frame number) to manually delete images and labels later if you make mistakes |
 | Right arrow | Next frame |
@@ -85,13 +101,7 @@ The ‘_sequential_’ method uses discrete frames rather than exponential smoot
 | = | Zoom in preview window (+ key) |
 | - | Zoom out preview window |
 
-Run the BehaveAI_annotation.py script and select a video (to run a python script, either call the file from a command line, or use an IDE such as Anaconda or Geany). You can track through and draw boxes over the things you want to classify. Note all the keyboard shortcuts. It has undo functions, grey-out functions, track single or 10-frame jumps etc... plus all the primary and secondary classes. With each frame, make sure you select (or grey out) everything. Press 'enter' to save the frame and move on.
- 
-Move through your videos, avoiding annotating the same thing over and over again (to avoid over-fitting, focus on variation). Remember that each frame you add to the annotation dataset (by pressing 'enter') must have **everything** annotated that should be classified. e.g. missing something out will confuse the training. You'll likely encounter cases where you're not sure how to classify something. These borderline cases can be important to help training the model, but if you don't want to add it, draw a grey box over the confusing element (e.g. the target is occluded so you can't tell what it's doing). Try to get the annotation selection box neatly to the edges of the target. Remember that the size and shape of the box might need to vary between motion and static modes (e.g. a flying fly takes up a large box in motion mode compared to static due to its rainbow motion tail). 
- 
-The aim is to build up an annotation dataset for initial model training, so focus on getting a broad range of backgrounds, contexts etc... Also think about those transition points where one behaviour is turning into another (e.g. switching from walking to flying). Have a clear rule-set in your head when annotating so you can tell what every frame should be (remember, if you can't do this, the CNN will struggle too). With a bit of practice the false colour motion tails will tell you exactly what the target was doing over the previous frames and you'll gain confidence in reading these cues.
- 
-50-100 annotations of each class should be sufficient to run a quick initial model. This can be done in under 20 minutes for a simple, single class.
+
  
 ## Building & running the initial model
 Once you've got an initial annotation dataset (e.g. 50-100 annotations drawn), run the BehaveAI_classify_track.py script. This will automatically start training the models from your initial annotation files. At this stage, with a small annotation set it should be quite fast. This will create an initial model, and you can see that the model and the YOLO performance data are placed into a new directory in your working directory. Have a look at the output and don't worry if it's not performing amazingly at this stage.
