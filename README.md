@@ -33,16 +33,30 @@ The ‘_sequential_’ method uses discrete frames rather than exponential smoot
 
 | Parameter | Range | Description |
 |----|----|----|
-| [...]_classes | comma-separated list (0=ignore) | List the names of the classifiers (motion & static, primary & secondary) |
-| [...]_colors | comma-separated RGB values, separated with semicolons | Specify the RGB colours associated with each class |
-| [...]_hotkeys | comma-separated list of single letters | Specify which keyboard key to associate with each class for annotation |
-| ignore_secondary | comma-separated list matching class names | Specify any classes that should be excluded from secondary classification |
+| [...]_classes | Comma-separated list (0=ignore) | List the names of the classifiers (motion & static, primary & secondary) |
+| [...]_colors | Comma-separated RGB values, separated with semicolons | Specify the RGB colours associated with each class |
+| [...]_hotkeys | Comma-separated list of single letters | Specify which keyboard key to associate with each class for annotation |
+| ignore_secondary | Comma-separated list matching class names | Specify any classes that should be excluded from secondary classification |
 | save_empty_frames | _true_ or _false_ | If true, pressing enter saves frames with no annotations |
 | dominant_source | _confidence_, _static_, or _motion_ | Specifies which source should be given priority in video output classification (both are saved in the output .csv file) |
 | scale_factor | Proportional range | Scales frames in both annotation and classification - values below 1 reduce image size and increase processing speed, but reduce detail, default 1.0 |
-| frame_skip | Integers >= 0 | Skips frames, e... |
-
-
+| frame_skip | Integers >= 0 | Skips n frames between each processed frame. 0=normal speed, 1=splits every-other-frame. Higher show motion effects further back in time. |
+| motion_threshold | Integers 0-255 | Motion below the threshold is eliminated - can reduce noise, though is typically not required |
+| line_thickness | Integer >= 1 | Thickness of lines drawn in the GUI and output videos, default 1, 4k displays/video use 2 |
+| font_size | Decimal > 0 | Size of font drawn in GUI and output videos, default 0.5, 4k displays/video use |
+| val_frequency | Proportion 0-1 | Specifies the probability that any annotation frame will be sent to the validation (rather than training) dataset, suggested range 0.1-0.2 |
+| strategy | _exponential_ or _sequential_ | Specifies motion coding, exponential gives smooth motion tails that fade out, sequential shows movement only in the past 3 frames |
+| expA & expB | Proportions 0-1 | If using exponential mode, specifies the rate of decay for green (expA) and red (expB) tails respectively. Higher values give slower temporal decay of movement (can see back further). Recommended values 0.5 and 0.8, avoid >0.9, consider using frame_skip to track motion over longer time-periods |
+| lum_weight | Proportion 0-1 | Higher values blend the static luminance (grey) frame with the motion colour. Values >0 allow both motion and static information to be combined in the same frame |
+| rgb_multipliers | Comma-separated list of 0-255 values | higher values multiply the motion RGB values (making them more saturated), default 4,4,4.
+| primary_classifier | Various options from ultralytics | The YOLO model version and size to use. e.g. yolov8s.pt, yolo11s.pt, yolo11n.pt i.e. version 8 or 11, and size (n=nano, s=small, m=medium etc...) note that yolov8 has the 'v' but yolo 11 doesn't. Default yolo11s.pt |
+| primary_epochs | Integer | How many training epochs to run, default 50 |
+| secondary_classifier | Various options from ultralytics | Similar to above, although secondary classifiers are run from cropped primary classes, so  they use models with the '-cls' suffix. Default yolo11s-cls.pt |
+| secondary_epochs | Integer | How many training epochs to run, default 50 |
+| [...]_conf_thresh | Proportion 0-1 | The confidence threshold used to label classes in video output, and add them to the .csv data output (which saves the actual confidence too) |
+| match_distance_thresh | Integers > 0 | Threshold below which nearby identified objects can be combined betwen frames, default 200, but should be smaller for low-res video, or higher for HD or fast-moving objects |
+| delete_after_missed | Integer > 0 | Number of frames after which temporary IDs should be deleted, higher numbers will track objects that disappear and reappear over longer periods |
+| centroid_merge_thresh | Integer > 0 | ... |
 
 ## Annotating
 
