@@ -26,7 +26,24 @@ You can optionally then use secondary classifiers (making your model hierarchica
 Two different user-selectable motion strategies are available; the ‘_exponential_’ method calculates the absolute difference between the current frame and the previous frames, exponentially smoothing over successive frames to show different temporal ranges in different colour channels. With this mode, a moving object creates a white ‘difference’ image that leaves behind a motion blur that fades from white to blue, to green, to red. Increasing the exponential smoothing weights allows this method to show events further back in time at no extra computational processing or memory costs when running the classifier because there is no need to re-load any previous frames. This mode is better able to convey changes in speed within each frame; accelerating objects will outpace their red tail, creating a blue-to-green streak, while deceleration will allow the red tail to catch up, creating yellow-to-red tails.
 
 The ‘_sequential_’ method uses discrete frames rather than exponential smoothing, with colours coding the differences between the previous 3 frames (white, blue, green and red going back through time respectively), and is suited to classifying movements over this short range of frames and preserve more spatial information from previous frames (e.g. rather than a smooth tail, an animal’s characteristic wing shapes will remain visible over all four frames). The motion false colour is then optionally blended with the luminance channel to provide greater context – combining motion information with static luminance. The exponential weightings, false-colour composition, and degree of luminance blending are all user-adjustable. Frame skipping can also be used to perform measurements over a larger number of frames (longer time-span) at no additional processing costs (e.g. suited to slow-moving objects whose behaviour is more apparent form faster video playback).
- 
+
+### Parameters
+
+![gull_settings_example](https://github.com/user-attachments/assets/46c94f90-5102-466b-91dc-a38d56f3c2dc)
+
+|----|----|----|
+| Parameter | Range | Description |
+| [...]_classes | comma-separated list (0=ignore) | List the names of the classifiers (motion & static, primary & secondary) |
+| [...]_colors | comma-separated RGB values, separated with semicolons | Specify the RGB colours associated with each class |
+| [...]_hotkeys | comma-separated list of single letters | Specify which keyboard key to associate with each class for annotation |
+| ignore_secondary | comma-separated list matching class names | Specify any classes that should be excluded from secondary classification |
+| save_empty_frames | _true_ or _false_ | If true, pressing enter saves frames with no annotations |
+| dominant_source | _confidence_, _static_, or _motion_ | Specifies which source should be given priority in video output classification (both are saved in the output .csv file) |
+| scale_factor | Proportional range | Scales frames in both annotation and classification - values below 1 reduce image size and increase processing speed, but reduce detail, default 1.0 |
+| frame_skip | Integers >= 0 | Skips frames, e... |
+
+
+
 ## Annotating
 
 ### Keyboard shortcuts:
