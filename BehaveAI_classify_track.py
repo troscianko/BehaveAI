@@ -8,6 +8,8 @@ from scipy.optimize import linear_sum_assignment
 import configparser
 import time
 import shutil
+import tkinter as tk
+from tkinter import messagebox
 
 
 # Load configuration
@@ -212,10 +214,25 @@ def maybe_retrain(model_type, yaml_path, project_path, model_path, classifier, e
 		
 		# Compare counts
 		if current_count != last_count:
-			print(f"\nNew annotations detected for {model_type}: {last_count} -> {current_count} images")
-			response = input(f"Do you want to re-train the {model_type} model? (y/n): ").strip().lower()
+			# ~ print(f"\nNew annotations detected for {model_type}: {last_count} -> {current_count} images")
+			# ~ response = input(f"Do you want to re-train the {model_type} model? (y/n): ").strip().lower()
+
+			# Display GUI prompt instead of terminal input
+			root = tk.Tk()
+			root.withdraw()  # Hide the root window
 			
-			if response == 'y' or global_response == 1:
+			msg = (
+			    f"New annotations detected for '{model_type}' model.\n"
+			    f"Image count changed from {last_count} to {current_count}.\n\n"
+			    "Do you want to re-train this model?"
+			)
+			
+			response = messagebox.askyesno("Retrain model?", msg)
+			root.destroy()
+
+
+			# ~ if response == 'y' or global_response == 1:
+			if response or global_response == 1:
 				global_response = 1 # 
 				# Backup existing model
 				backup_dir = project_path + "_backup"
@@ -573,6 +590,7 @@ def process_video(file):
 	])
 
 	print(f"Processing video: {file}")
+	print('Initialising')
 	current_frame = 0
 	print_tick = 0
 	start_time = time.time()
@@ -940,7 +958,7 @@ def process_video(file):
 				elapsed = time.time() - start_time
 				current_fps = current_frame / elapsed if elapsed > 0 else 0
 				pc_done = 100 * (frame_skip+1) * current_frame / total_frames
-				print(f"Progress: {pc_done:.2f}% | {current_fps:.1f} FPS", end='\r')
+				print(f"Progress: {pc_done:.2f}% | {current_fps:.1f} FPS", end='\r', flush=True)
 				print_tick = 0
 			current_frame += 1
 			print_tick += 1
@@ -953,7 +971,7 @@ def process_video(file):
 	cap.release()
 	writer.release()
 	csv_file.close()
-	print(f"Done {base} | {current_fps:.1f} FPS")
+	print(f"Done processing {base} | {current_fps:.1f} FPS")
 
 if __name__ == '__main__':
 	for vid in glob.glob(os.path.join(input_folder, "*.*")):

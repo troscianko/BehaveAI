@@ -258,13 +258,13 @@ if primary_motion_classes[0] != '0':
 		model_motion = YOLO(primary_motion_model_path)
 	
 
-
-
-
 # File dialog for video selection
+clips_dir = os.path.join(os.getcwd(), "clips")
+initial_dir = clips_dir if os.path.isdir(clips_dir) else os.getcwd()
+
 root = tk.Tk()
-#root.withdraw()
-video_path = filedialog.askopenfilename(title="Select video file")
+root.withdraw()
+video_path = filedialog.askopenfilename(title="Select video file", initialdir=initial_dir)
 root.destroy()
 if not video_path:
 	print("No video selected. Exiting.")
