@@ -5,11 +5,30 @@
 
 The BehaveAI framework converts motion information into false colours that allow both the human annotator and convolutional neural net (CNN) to easily identify patterns of movement. In addition, the framework integrates conventional static information, allowing both motion streams and static streams to be combined (in a similar fashion to the mammalian visual system). The framework also supports hierarchical models (e.g. detect something from it's movement, then work out what exactly it is from conventional static appearance, or vice-versa); and semi-supervised annotation, allowing the annotator to correct errors made by initial models, making for a more efficient and effective training process.
 
+#### Key features:
+- Fast user-friendly annotation - in under an hour you can create a powerful tracking model
+- Identifies objects and  their behaviour based on motion and/or static appearance 
+- Can track any type and combination of animal/object
+- Tracks multiple individuals, classifying the behaviour of each independently
+- Computationally efficient - runs fine on low-end devices without GPU
+- Lightweight installation
+- Free & open source (GPL license)
+
 ## Prerequisites & Installation
 
-You need a python3 environment with OpenCV and Ultralytics (YOLO) libraries, plus a few other standard libraries (numpy, etc...) Should work fine with Linux, Windows and Mac. A CUDA-enabled GPU speeds up the training, but it works fine without.
+You need a python3 environment (Windows, Linux or Mac) with a few extra libraries: OpenCV, numpy, ultralytics, scipy, and PyYAML. These can be installed using pip with the following command:
+
+```shell
+pip install opencv-python numpy ultralytics scipy PyYAML
+```
+
+A CUDA-enabled GPU speeds up the training, but it works fine without.
  
-You only need three files - the annotation script (_BehaveAI_annotation.py_), the classification script (_BehaveAI_classify_track.py_), and the settings ini file (_BehaveAI_settings.ini_ - it must have this filename to work). First, create a working directory, add these three files, and adjust the settings .ini file to your needs (see below). For convenience, also add your video files to a subdirectory here.
+Place the BehaveAI files in a working directory, adjust the _BehaveAI_settings.ini_ file to your needs using a text editor (see below). For convenience, also add your video files to a subdirectory here named 'clips'. Run the BehaveAI.py script (to run a python script, either call the file from a command line, or use an IDE such as Anaconda or Geany). This will bring up the launcher GUI:
+
+<img width="600" alt="Launcher GUI" src="https://github.com/user-attachments/assets/f4ee9768-724f-4d79-a1f5-d5c60b7f0d99" />
+
+Click _Annotate_ and select a file for annotation. Once you've done enough annotating click _Train & batch classify_. 
  
 ## Setting Parameters
 
@@ -19,7 +38,67 @@ You need to adjust the BehaveAI_settings.ini file with your settings. Have a rea
 
 The BehaveAI framework uses two streams of video information, still (_static_) frames, and false-colour-motion (_motion_) frames Primary classifiers (either motion or static) detect and classify objects across each whole frame. You must specify at least one primary classifier, but can specify multiple across both motion and static streams. The aim here is to make detection as easy as possible for the classifier (some things are easy to see with motion, others static).
  
-You can optionally then use secondary classifiers (making your model hierarchical). When you specify these, anything found by a primary classifier will be cropped and sent to the secondary classifier. This can allow you to separate the tasks of detection and classification. See the fly and gull examples for a somewhat complex mix. There are more nuanced settings too. You might not want all primary classes to be sent to the secondary classifier, such as a fly in flight (its wings are a blur, so it's not possible to determine the sex, so flying flies are ignored by the secondary classifiers ).
+You can optionally then use secondary classifiers (making your model hierarchical). When you specify these, anything found by a primary classifier will be cropped and sent to the secondary classifier. This can allow you to separate the tasks of detection and classification. See the fly and gull examples for a somewhat complex mix. There are more nuanced settings too. You might not want all primary classes to be sent to the secondary classifier, such as a fly in flight (its wings are a blur, so it's not possible to determine the sex, so flying flies are ignored by the secondary classifiers ). For the highest computational efficiecy, specify a single primary class and let the secondary classifiers (which are much faster as they use cropped regions) do more work.
+
+#### Simple tracking example
+
+Tracking moths flying against a moving background using only the motion stream (_BehaveAI_settings.ini_ file):
+
+```ini
+primary_motion_classes = moth_motion
+primary_motion_colors = 246,97,81
+primary_motion_hotkeys = m
+motion_blocks_static = false
+
+secondary_motion_classes = 0
+secondary_motion_colors = 0
+secondary_motion_hotkeys = 0
+
+primary_static_classes = 0
+primary_static_colors = 0
+primary_static_hotkeys = 0
+static_blocks_motion = false
+
+secondary_static_classes = 0
+secondary_static_colors = 0
+secondary_static_hotkeys = 0
+
+ignore_secondary = 
+save_empty_frames = true
+dominant_source = confidence
+```
+
+#### Complex hierarchical example:
+
+Tracking flies on lilly pads we can use three primary motion classes (_walk_, _fly_ and _display_). When the flies aren't moving they're difficult to spot in the motion stream, so we also add a primary static class (_rest_) to find them from the static stream. However, the static classifier will be able to see all the cases of flies walking, flying or displaying that aren't classed as _rest_. This would likely confuse the static classifier because a walking fly looks a lot like a resting fly. So we add _motion_blocks_static = true_ to hide all the instances of walking, flying or displaying flies from the static classifier. 
+
+We also want to determine the sex of each fly from its wing markings, so add _male_ and _female_ as secondary static classes. Flies will often be detected by both the motion and static classifier, but the motion one will be more reliable and make very few false positive errors, so we set this to be the dominant stream for detections (_dominant_source = motion_).
+
+_BehaveAI_settings.ini_ file:
+
+```ini
+primary_motion_classes = walk, fly, display
+primary_motion_colors = 220,138,221; 249,240,107; 246,97,81
+primary_motion_hotkeys = w, y, d
+motion_blocks_static = true
+
+secondary_motion_classes = 0
+secondary_motion_colors = 0
+secondary_motion_hotkeys = 0
+
+primary_static_classes = rest
+primary_static_colors = 143,193,193
+primary_static_hotkeys = r
+static_blocks_motion = false
+
+secondary_static_classes = male, female
+secondary_static_colors = 153,193,241; 143,240,164
+secondary_static_hotkeys = m, f
+
+ignore_secondary = display, fly
+save_empty_frames = true
+dominant_source = motion
+```
 
 ### Motion strategy
 
@@ -39,6 +118,8 @@ TLDR: The only things you really must change to fit your project are the primary
 | [...]_classes | Comma-separated list (0=ignore) | List the names of the classifiers (motion & static, primary & secondary) |
 | [...]_colors | Comma-separated RGB values, separated with semicolons (0=ignore) | Specify the RGB colours associated with each class |
 | [...]_hotkeys | Comma-separated list of single letters (0=ignore) | Specify which keyboard key to associate with each class for annotation |
+| motion_blocks_static | _true_ or _false_ | If enabled, this will hide (grey-out) things annotated in the motion stream from the static stream. Useful to avoid confusing the classifier when you're detecting objects from the motion and static streams simultaneously. Check the annotation output images to see how it works, default _true_ |
+| static_blocks_motion | _true_ or _false_ | As above, although unlikely to be as useful because objects generally aren't visible to the motion stream when still, default _false_ |
 | ignore_secondary | Comma-separated list matching class names | Specify any classes that should be excluded from secondary classification |
 | save_empty_frames | _true_ or _false_ | If true, pressing enter saves frames with no annotations |
 | dominant_source | _confidence_, _static_, or _motion_ | Specifies which source should be given priority in video output classification (both are saved in the output .csv file) |
@@ -72,7 +153,7 @@ TLDR: The only things you really must change to fit your project are the primary
 
 _Screenshot of the annotation GUI. The main window is showing the current motion frame (and can switch to static). The right-hand bar shows a zoom view of the current cursor position in static (top right) and motion streams (middle right), and also shows a looping animation of the video covering the same time-frame as the user-selected motion settings (bottom right). The bar at the bottom of the screen highlights the available primary (upper case) and secondary (lower case) classes, together with their associated keys. The trackbar at the bottom of the screen allows seeking through the video_
 
-Run the BehaveAI_annotation.py script and select a video (to run a python script, either call the file from a command line, or use an IDE such as Anaconda or Geany). You can track through and draw boxes over the things you want to classify. Note all the keyboard shortcuts. It has undo functions, grey-out functions, track single or 10-frame jumps etc... plus all the primary and secondary classes. With each frame, make sure you select (or grey out) all objects listed as a class. Press 'enter' to save the frame and move on.
+Click _Annotate_ in the laucher or run the BehaveAI_annotation.py script and select a video. You can track through and draw boxes over the things you want to classify. Note all the keyboard shortcuts. It has undo functions, grey-out functions, track single or 10-frame jumps etc... plus all the primary and secondary classes. With each frame, make sure you select (or grey out) all objects listed as a class (otherwise you'll confuse  it). Press 'enter' to save the frame and move on.
  
 Move through your videos, avoiding annotating the same thing over and over again (to avoid over-fitting, focus on variation). Remember that each frame you add to the annotation dataset (by pressing 'enter') must have **everything** annotated that should be classified. e.g. missing something out will confuse the training. You'll likely encounter cases where you're not sure how to classify something. These borderline cases can be important to help training the model, but if you don't want to add it, draw a grey box over the confusing element (e.g. the target is occluded so you can't tell what it's doing). Try to get the annotation selection box neatly to the edges of the target. Remember that the size and shape of the box might need to vary between motion and static modes (e.g. a flying fly takes up a large box in motion mode compared to static due to its rainbow motion tail). 
 
@@ -104,11 +185,13 @@ The aim is to build up an annotation dataset for initial model training, so focu
 
  
 ## Building & running the initial model
-Once you've got an initial annotation dataset (e.g. 50-100 annotations drawn), run the BehaveAI_classify_track.py script. This will automatically start training the models from your initial annotation files. The script will also download a YOLO base model, so you need internet access (or pre-download the relevant initial weights file and drop into the working directory). At this stage, with a small annotation set, training should be quite fast even without GPU accelleration (minutes). This will create an initial model, and you can see that the model and the YOLO performance data are placed into a new directory in your working directory. Have a look at the output and don't worry if it's not performing amazingly at this stage.
+Once you've got an initial annotation dataset (e.g. 50-100 annotations drawn), click _Train & batch classify_ in the launcher or run the BehaveAI_classify_track.py script. This will automatically start training the models from your initial annotation files. The script will also download a YOLO base model, so you need internet access (or pre-download the relevant initial weights file and drop into the working directory). At this stage, with a small annotation set, training should be quite fast even without GPU acceleration (minutes). This will create an initial model, and you can see that the model and the YOLO performance data are placed into a new directory in your working directory. Have a look at the output and don't worry if it's not performing amazingly at this stage.
 
 ## Auto-Annotation
 
 Once you've trained an initial model the annotation script it will use this in a semi-supervised 'auto-annotation' fashion, attempting to detect and classify things as you annotate. This will show you where the model is working well, and where it's not (closing the training loop). Use this opportunity to correct any errors it's making. e.g. add things it missed (false negatives), redraw boundaries, correct classes etc... importantly you can also add plain background frames (with nothing annotated) in cases where it's making false positive errors. Also focus on those borderline cases whether the model isn't confident (it shows you the confidence). Remember to press 'enter' as before to save a new annotation frame. Aim to increase your annotation set - perhaps doubling the size. Now re-run the BehaveAI_classify_track.py script and it will note that you've added more annotations and ask whether you want to re-train the model. Select 'y' (yes) and it will do so. You can repeat this auto-annotation cycle until you achieve the model performance and versatility required, helping to avoid annotating more than necessary, and also avoiding over-fitting.
+
+<img width="600" alt="Launcher retrain" src="https://github.com/user-attachments/assets/b075a4ee-b7d6-4624-9ba8-7151144bd080" />
 
 If you'd prefer to train the model from scratch rather than retrain your existing model (perhaps also switching between different YOLO version and model sizes), simply move or rename the relevant model directories, adjust the ini settings if you want to try a different model type or different number of epochs and re-run the script. Old models are renamed as backups, so nothing should be lost. Note that you must not change the motion parameters in the ini file after building our annotation set; annotations are saved only with the current setting and cannot be altered afterwards.
 
