@@ -12,7 +12,7 @@ The BehaveAI framework converts motion information into false colours that allow
 - Tracks multiple individuals, classifying the behaviour of each independently
 - Computationally efficient - runs fine on low-end devices without GPU
 - Lightweight installation
-- Free & open source (GPL license)
+- Free & open source (GNU Afferro General Public License)
 
 ## Prerequisites & Installation
 
