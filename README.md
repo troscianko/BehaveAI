@@ -1,9 +1,9 @@
 <img width="450" height="76" alt="BehaveAi logo" src="https://github.com/user-attachments/assets/73c30b1b-d73c-4f63-8783-13270bc14b8e" />
 
-# A Framework for detecting, classifying and tracking moving objects
+# A framework for detecting, classifying and tracking moving objects
 
 
-The BehaveAI framework converts motion information into false colours that allow both the human annotator and convolutional neural net (CNN) to easily identify patterns of movement. In addition, the framework integrates conventional static information, allowing both motion streams and static streams to be combined (in a similar fashion to the mammalian visual system). The framework also supports hierarchical models (e.g. detect something from it's movement, then work out what exactly it is from conventional static appearance, or vice-versa); and semi-supervised annotation, allowing the annotator to correct errors made by initial models, making for a more efficient and effective training process.
+The BehaveAI framework converts motion information into false colours that allow both the human annotator and fully convolutional neural network (F-CNN) to easily identify patterns of movement. In addition, the framework integrates conventional static information, allowing both motion streams and static streams to be combined (in a similar fashion to the mammalian visual system). The framework also supports hierarchical models (e.g. detect something from it's movement, then work out what exactly it is from conventional static appearance, or vice-versa); and semi-supervised annotation, allowing the annotator to rapidly correct errors made by initial models, making for a more efficient and effective training process.
 
 #### Key features:
 - Fast user-friendly annotation - in under an hour you can create a powerful tracking model
@@ -11,11 +11,12 @@ The BehaveAI framework converts motion information into false colours that allow
 - Identifies small, fast moving, and motion-blurred targets
 - Can track any type(s) of animal/object
 - Tracks multiple individuals, classifying the behaviour of each independently
-- Computationally efficient - runs fine on low-end devices without GPU
-- Lightweight installation
+- Built around the verstile YOLO (You Only Look Once) architecture
+- Computationally efficient - runs fine on low-end devices without GPUs
+- Lightweight installation and intuitive user interface
 - Free & open source (GNU Afferro General Public License)
 
-## Prerequisites & Installation
+## Prerequisites & installation
 
 You need a python3 environment (Windows, Linux or Mac) with a few extra libraries: OpenCV, numpy, ultralytics, scipy, and PyYAML. These can be installed using pip with the following command:
 
@@ -25,21 +26,21 @@ pip install opencv-python numpy ultralytics scipy PyYAML
 
 A CUDA-enabled GPU speeds up the training, but it works fine without.
  
-Place the BehaveAI files in a working directory, adjust the _BehaveAI_settings.ini_ file to your needs using a text editor (see below). For convenience, also add your video files to a subdirectory here named 'clips'. Run the BehaveAI.py script (to run a python script, either call the file from a command line, or use an IDE such as Anaconda or Geany). This will bring up the launcher GUI:
+Place the BehaveAI files in a working directory and [adjust the _BehaveAI_settings.ini_ file](#setting-parameters) to fit your needs using a text editor. For convenience, also create a subdirectory here named 'clips' and place your video files within. Run the BehaveAI.py script (either from the command line, Anaconda, or an IDE such as Geany, Jupyter, or Visual Studio Code). This will bring up the launcher GUI:
 
 <img width="600" alt="Launcher GUI" src="https://github.com/user-attachments/assets/f4ee9768-724f-4d79-a1f5-d5c60b7f0d99" />
 
 Click _Annotate_ and select a file for annotation. Once you've done enough annotating click _Train & batch classify_. 
  
-## Setting Parameters
+## Setting parameters
 
-You need to adjust the BehaveAI_settings.ini file with your settings. Have a read through the table below to see what each parameter controls. Note that each class needs an associated keyboard hotkey and colour or it'll throw an error - see the existing format. You can chose betwen YOLO versions (e.g. v8 or v11), and different model sizes (n=nano, s=small etc...). You can also specify what proportion of annotations should be automatically allocated to validation (you can manually move the files around later if you'd like though - just be sure to move both images and labels between the 'train' and 'val' subdirectories).
+You need to adjust the BehaveAI_settings.ini file with your settings. Have a read through the [table](#parameters) below to see what each parameter controls. Note that each class needs an associated keyboard hotkey and colour code or it'll throw an error - see the existing format. You can chose between [YOLO versions](https://github.com/ultralytics/ultralytics/tree/main?tab=readme-ov-file#-documentation) (e.g. YOLOv8 or YOLO11), and [model sizes](https://github.com/ultralytics/ultralytics?tab=readme-ov-file#-models) (e.g. n=nano or s=small). You can also specify what proportion of annotations should be automatically allocated to training and validation (you can manually move the files around later if you'd like though - just be sure to move both images and labels between the 'train' and 'val' subdirectories).
 
 ### Primary and secondary, static and motion classifiers
 
-The BehaveAI framework uses two streams of video information, still (_static_) frames, and false-colour-motion (_motion_) frames Primary classifiers (either motion or static) detect and classify objects across each whole frame. You must specify at least one primary classifier, but can specify multiple across both motion and static streams. The aim here is to make detection as easy as possible for the classifier (some things are easy to see with motion, others static).
+The BehaveAI framework uses two streams of video information, still (_static_) frames, and false-colour-motion (_motion_) frames. Within these, [primary classifiers](#simple-tracking-example) (either motion or static) detect and classify objects across entire frames. You must specify at least one primary classifier, but can specify multiple across both motion and static streams. These can encompass both the same target in different motion states (e.g. stationary vs flying bird), and different targets in their respective motion states (e.g. flying bird vs swimming fish). The aim here is to make detection as easy as possible for the classifier (some things are easier to see with motion, others static), while incoperating target types desired by the user.
  
-You can optionally then use secondary classifiers (making your model hierarchical). When you specify these, anything found by a primary classifier will be cropped and sent to the secondary classifier. This can allow you to separate the tasks of detection and classification. See the fly and gull examples for a somewhat complex mix. There are more nuanced settings too. You might not want all primary classes to be sent to the secondary classifier, such as a fly in flight (its wings are a blur, so it's not possible to determine the sex, so flying flies are ignored by the secondary classifiers ). For the highest computational efficiecy, specify a single primary class and let the secondary classifiers (which are much faster as they use cropped regions) do more work.
+You can then optionally use secondary classifiers to identify featues within primary classes (making your model hierarchical). When you specify these, anything found by a primary classifier will be cropped and sent to the secondary classifier (e.g. male vs female classification for the primary class of a stationary bird). This can allow you to separate the tasks of detection and feature extraction. See the [fly](#complex-hierarchical-example) and [gull](#motion-strategy) examples for a somewhat complex mix. There is nuance to utilising these settings effectively. You might not want all primary classes to be sent to a secondary classifier, such as a fly in flight (its wings are a blur, so it's not possible to determine the sex, so flying flies are ignored by the secondary classifiers). For the highest computational efficiecy, specify a single primary class and let the secondary classifiers (which are much faster as they use cropped regions) do more work.
 
 #### Simple tracking example
 
@@ -71,7 +72,7 @@ dominant_source = confidence
 
 #### Complex hierarchical example:
 
-Tracking flies on lilly pads we can use three primary motion classes (_walk_, _fly_ and _display_). When the flies aren't moving they're difficult to spot in the motion stream, so we also add a primary static class (_rest_) to find them from the static stream. However, the static classifier will be able to see all the cases of flies walking, flying or displaying that aren't classed as _rest_. This would likely confuse the static classifier because a walking fly looks a lot like a resting fly. So we add _motion_blocks_static = true_ to hide all the instances of walking, flying or displaying flies from the static classifier. 
+Tracking flies on lilly pads using three primary motion classes (_walk_, _fly_ and _display_). When the flies aren't moving they're difficult to spot in the motion stream, so we also add a primary static class (_rest_) to find them from the static stream. However, the static classifier will be able to see all the cases of flies walking, flying or displaying that aren't classed as _rest_. This would likely confuse the static classifier because a walking fly looks a lot like a resting fly. So we add _motion_blocks_static = true_ to hide all the instances of walking, flying or displaying flies from the static classifier.
 
 We also want to determine the sex of each fly from its wing markings, so add _male_ and _female_ as secondary static classes. However, whe displaying or in flight these wing marking won't be visible, so we can tell the model to ignore running the secondary classifier for these cases (_ignore_secondary = display, fly_). Finally, flies will often be detected by both the motion and static classifier, but the motion one will be more reliable and make very few false positive errors, so we set this to be the dominant stream for detections (_dominant_source = motion_). This only affects the video output - data from both streams are saved in the output.
 
@@ -107,12 +108,12 @@ dominant_source = motion
 
 _Figure showing the different motion strategies (exponential vs sequential), plus the function of lum_weight and frame_skip, of a gull taking flight_
 
-Two different user-selectable motion strategies are available; the ‘_exponential_’ method calculates the absolute difference between the current frame and the previous frames, exponentially smoothing over successive frames to show different temporal ranges in different colour channels. With this mode, a moving object creates a white ‘difference’ image that leaves behind a motion blur that fades from white to blue, to green, to red. Increasing the exponential smoothing weights allows this method to show events further back in time at no almost no extra computational cost when running the classifier because there is no need to re-load any previous frames. This mode is better able to convey changes in speed within each frame; accelerating objects will outpace their red tail, creating a blue-to-green streak, while deceleration will allow the red tail to catch up, creating yellow-to-red tails.
+Two different user-selectable motion strategies are available; the ‘_exponential_’ method calculates the absolute difference between the current frame and the previous frames, exponentially smoothing over successive frames to show different temporal ranges in different colour channels. With this mode, a moving object creates a white ‘difference’ image that leaves behind a motion blur that fades from white to blue, to green, to red. Increasing the exponential smoothing weights allows this method to show events further back in time at almost no extra computational cost when running the classifier because there is no need to re-load any previous frames. This mode is better able to convey changes in speed within each frame; accelerating objects will outpace their red tail, creating a blue-to-green streak, while deceleration will allow the red tail to catch up, creating yellow-to-red tails.
 
-The ‘_sequential_’ method uses discrete frames rather than exponential smoothing, with colours coding the differences between the previous 3 frames (white, blue, green and red going back through time respectively), and is suited to classifying movements over this short range of frames and preserve more spatial information from previous frames (e.g. rather than a smooth tail, an animal’s characteristic wing shapes will remain visible over all four frames). The motion false colour is then optionally blended with the luminance channel to provide greater context – combining motion information with static luminance. The exponential weightings, false-colour composition, and degree of luminance blending are all user-adjustable. Frame skipping can also be used to perform measurements over a larger number of frames (longer time-span) at no additional processing costs (e.g. suited to slow-moving objects whose behaviour is more apparent from faster video playback).
+The ‘_sequential_’ method uses discrete frames rather than exponential smoothing, with colours coding the differences between the previous 3 frames (white, blue, green and red going back through time respectively), and is suited to classifying movements over this short range of frames while preserving more spatial information (e.g. rather than a smooth tail, an animal’s characteristic wing shapes will remain visible over all four frames). The motion false colour is then optionally blended with the luminance channel to provide greater context – combining motion information with static luminance. The exponential weightings, false-colour composition, and degree of luminance blending are all user-adjustable. Frame skipping can also be used to perform measurements over a larger number of frames (representing a longer time-span) at no additional processing costs (e.g. suited to slow-moving objects whose behaviour is more apparent across a longer span of video).
 
 ### Parameters
-TLDR: The only things you really must change to fit your project are the primary and secondary classes (and each needs keys and colours associated). Have a look at the motion in your examples and consider tweaking the strategy. The defaults for everything else will likely get you started. Other than tracking and Kalman filter settings, you can't change the values mid-way through annotation though. 
+TLDR: The only things you really must change to fit your project are the primary and secondary classes (and each needs keys and colours associated). Have a look at the motion in your examples and consider tweaking the strategy. The defaults for everything else will likely get you started. Other than tracking and Kalman filter settings, you can't change the values mid-way through annotation.
 
 | Parameter | Range | Description |
 |----|----|----|
