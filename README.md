@@ -205,3 +205,8 @@ If you'd prefer to train the model from scratch rather than retrain your existin
 <img width="600" alt="Launcher retrain" src="https://github.com/user-attachments/assets/b075a4ee-b7d6-4624-9ba8-7151144bd080" />
 
 Once you're happy with the model, create a folder in your working directory called 'input' containing the videos that you wish to analyse (ideally not the ones you used for training in order to be conservative). Run the BehaveAI_classify_track.py script. It will update the models if necessary, and will then run inference on all of the videos in your 'input' directory, outputing the results as a .csv file that details all the detections frame-by-frame, together with confidence scores, class hierachies, and tracking IDs. You might want to play with the Kalman filter and confidence theshold parameters to improve tracking performance. You can adjust them to specify how fast objects can change direction, how much underlying noise there is in the positional accuracy, how confident the model needs to be to accept detections, and how much objects can overlap before they are treated as a single entity.
+
+<img width="2245" src="https://github.com/troscianko/BehaveAI/blob/Toshea111-patch-1/Behave%20Pipeline.png" />
+
+_Overview of the BehaveAI pipeline_
+
