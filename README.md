@@ -198,10 +198,10 @@ Once you've trained an initial model the annotation script it will use this in a
 
 _Examples of common errors revealed through auto-annotation_
 
-<img width="600" alt="Launcher retrain" src="https://github.com/user-attachments/assets/b075a4ee-b7d6-4624-9ba8-7151144bd080" />
-
 If you'd prefer to train the model from scratch rather than retrain your existing model (perhaps also switching between different YOLO version or model sizes), simply move or rename the relevant model directories, adjust the BehaveAI_settings.ini file if you want to try a different model type or different number of epochs, and re-run the script. Previous models are renamed as backups, so nothing should be lost. Note that you must not change the motion parameters in the BehaveAI_settings.ini file after building an annotation set; annotations are saved only with the current setting and cannot be altered afterwards.
 
 ## Batch processing
+
+<img width="600" alt="Launcher retrain" src="https://github.com/user-attachments/assets/b075a4ee-b7d6-4624-9ba8-7151144bd080" />
 
 Once you're happy with the model, create a folder in your working directory called 'input' containing the videos that you wish to analyse (ideally not the ones you used for training in order to be conservative). Run the BehaveAI_classify_track.py script. It will update the models if necessary, and will then run inference on all of the videos in your 'input' directory, outputing the results as a .csv file that details all the detections frame-by-frame, together with confidence scores, class hierachies, and tracking IDs. You might want to play with the Kalman filter and confidence theshold parameters to improve tracking performance. You can adjust them to specify how fast objects can change direction, how much underlying noise there is in the positional accuracy, how confident the model needs to be to accept detections, and how much objects can overlap before they are treated as a single entity.
