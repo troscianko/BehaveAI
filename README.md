@@ -70,7 +70,7 @@ save_empty_frames = true
 dominant_source = confidence
 ```
 
-#### Complex hierarchical example:
+#### Complex hierarchical example
 
 Tracking flies on lilly pads using three primary motion classes (_walk_, _fly_ and _display_). When the flies aren't moving they're difficult to spot in the motion stream, so we also add a primary static class (_rest_) to find them from the static stream. However, the static classifier will be able to see all the cases of flies walking, flying or displaying that aren't classed as _rest_. This would likely confuse the static classifier because a walking fly looks a lot like a resting fly. So we add _motion_blocks_static = true_ to hide all the instances of walking, flying or displaying flies from the static classifier.
 
@@ -196,7 +196,7 @@ Once you've trained an initial model the annotation script it will use this in a
 
 Also focus on those borderline cases where the model isn't confident (based on the confidence scores appended to boxes). Remember to press 'enter' as before to save the new annotations on each frame. Aim to increase your annotation set - perhaps doubling the size. Now re-run the BehaveAI_classify_track.py script and it will note that you've added more annotations and ask whether you want to re-train the model. Select _yes_ and it will do so. You can repeat this auto-annotation cycle until you achieve the model performance and versatility required, helping to avoid annotating more than necessary, and also avoiding over-fitting.
 
-<img width="2245" src="https://github.com/troscianko/BehaveAI/blob/main/BehaveAI%20Examples.png" />
+<img width="2245" src="https://github.com/troscianko/BehaveAI/blob/Toshea111-patch-1/BehaveAI%20Examples.png" />
 
 _Examples of common errors revealed through auto-annotation_
 
@@ -214,20 +214,20 @@ Once you're happy with the model, create a folder in your working directory call
 
 _Overview of the BehaveAI pipeline_
 
-Combining the above steps, you can build an efficient workflow for your desired pipeline consisting of manual annotation, training, semi-automated annotation, retraining, and deployment. This process can be repeated as many times as needed with additional video data to deliver a sufficiently accurate model with minimal manual input. Below is a brief example of this when classifying cleaning behaviour in ants.
+Combining the above steps, you can build an efficient workflow for your desired pipeline consisting of manual annotation, training, semi-automated annotation, retraining, and deployment. This process can be repeated as many times as needed with additional video data to deliver a sufficiently accurate model with minimal manual input. Below is a brief example of this when classifying behaviour in ants.
 
-<img width="2245" src="https://github.com/troscianko/BehaveAI/blob/main/Ant%20Cleaning%20Example.gif" />
+<img width="2245" src="https://github.com/troscianko/BehaveAI/blob/Toshea111-patch-1/Ant%20Cleaning%20Example.gif" />
 
 _Use the GUI to determine how best to use the static and motion streams for annotation_
 
-<img width="2245" src="https://github.com/troscianko/BehaveAI/blob/main/Annotation%20Example.gif" />
+<img width="2245" src="https://github.com/troscianko/BehaveAI/blob/Toshea111-patch-1/Annotation%20Example.gif" />
 
 _Annotate individuals with the desired behavioural classifiers, switching between static an motion streams as needed_
 
-<img width="2245" src="https://github.com/troscianko/BehaveAI/blob/main/Annotation%20Example%201.gif" />
+<img width="2245" src="https://github.com/troscianko/BehaveAI/blob/Toshea111-patch-1/Annotation%20Example%201.gif" />
 
 _Following training of an initial model, check predictions via auto-annotation and correct where required_
 
-<img width="2245" src="https://github.com/troscianko/BehaveAI/blob/main/Deployment%20Example.gif" />
+<img width="2245" src="https://github.com/troscianko/BehaveAI/blob/Toshea111-patch-1/Deployment%20Example.gif" />
 
 _Once satisfactory performance is achieved, run inference on videos to extract and visualise behavioural metrics_
