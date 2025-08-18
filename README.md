@@ -213,3 +213,5 @@ Once you're happy with the model, create a folder in your working directory call
 _Overview of the BehaveAI pipeline_
 
 Combining the above steps, you can thus build an efficient workflow for your desired pipeline consisting of manual annotation, training, semi-automated annotation to determine where more data is needed, and finally retraining and deployment. This process can be repeated as many times as needed with additional video data to deliver a sufficiently accurate model with minimal manual input.
+
+<img width="2245" src="https://github.com/user-attachments/assets/61179965-e437-419d-9afa-4b212cc9250e" />
