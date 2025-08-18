@@ -190,13 +190,13 @@ The aim is to build up an annotation dataset for initial model training, so focu
 
 Once you've got an initial annotation dataset (e.g. 50-100 annotations), click _Train & batch classify_ in the launcher or run the BehaveAI_classify_track.py script. This will automatically start training models from your initial annotation files. The script will also download a YOLO base model, so you need internet access (or pre-download the relevant [initial weights file](https://github.com/ultralytics/ultralytics/tree/main?tab=readme-ov-file#-models) and drop it into the working directory). At this stage, with a small annotation set, training should be quite fast even without GPU acceleration (minutes). This will create an initial model, and you can see that the model and the YOLO performance data are placed into a new folder in your working directory. Have a look at the output and don't worry if it's not performing amazingly at this stage.
 
-## Auto-Annotation
+## Auto-annotation
 
 Once you've trained an initial model the annotation script it will use this in a semi-supervised 'auto-annotation' fashion, attempting to automatically detect and classify things as you annotate. This will show you where the model is working well, and where it's not (closing the training loop). Use this opportunity to correct any errors it's making. Add things that it misses (false negatives), remove any incorrect detections (false positives), redraw boxes that are missaligned, and correct objects that are missclassfied. Importantly, you can also add plain background frames (with nothing annotated) in cases where it's falsely detecting elements of the background.
 
 Also focus on those borderline cases where the model isn't confident (based on the confidence scores appended to boxes). Remember to press 'enter' as before to save the new annotations on each frame. Aim to increase your annotation set - perhaps doubling the size. Now re-run the BehaveAI_classify_track.py script and it will note that you've added more annotations and ask whether you want to re-train the model. Select _yes_ and it will do so. You can repeat this auto-annotation cycle until you achieve the model performance and versatility required, helping to avoid annotating more than necessary, and also avoiding over-fitting.
 
-<img width="2245" src="https://github.com/troscianko/BehaveAI/blob/Toshea111-patch-1/BehaveAI%20Examples.png" />
+<img width="2245" src="https://github.com/troscianko/BehaveAI/blob/main/BehaveAI%20Examples.png" />
 
 _Examples of common errors revealed through auto-annotation_
 
@@ -216,6 +216,18 @@ _Overview of the BehaveAI pipeline_
 
 Combining the above steps, you can build an efficient workflow for your desired pipeline consisting of manual annotation, training, semi-automated annotation, retraining, and deployment. This process can be repeated as many times as needed with additional video data to deliver a sufficiently accurate model with minimal manual input. Below is a brief example of this when classifying cleaning behaviour in ants.
 
-<img width="2245" src="https://github.com/troscianko/BehaveAI/blob/Toshea111-patch-1/Ants%20Cleaning.gif" />
+<img width="2245" src="https://github.com/troscianko/BehaveAI/blob/main/Ant%20Cleaning%20Example.gif" />
 
 _Use the GUI to determine how best to use the static and motion streams for annotation_
+
+<img width="2245" src="https://github.com/troscianko/BehaveAI/blob/main/Annotation%20Example.gif" />
+
+_Annotate individuals with the desired behavioural classifiers, switching between static an motion streams as needed_
+
+<img width="2245" src="https://github.com/troscianko/BehaveAI/blob/main/Annotation%20Example%201.gif" />
+
+_Following training of an initial model, check predictions via auto-annotation and correct where required_
+
+<img width="2245" src="https://github.com/troscianko/BehaveAI/blob/main/Deployment%20Example.gif" />
+
+_Once satisfactory performance is achieved, run inference on videos to extract and visualise behavioural metrics_
