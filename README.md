@@ -39,6 +39,10 @@ You need to adjust the BehaveAI_settings.ini file with your settings. Have a rea
 ### Primary and secondary, static and motion classifiers
 
 The BehaveAI framework uses two streams of video information, still (_static_) frames, and false-colour-motion (_motion_) frames. Within these, [primary classifiers](#simple-tracking-example) (either motion or static) detect and classify objects across entire frames. You must specify at least one primary classifier, but can specify multiple across both motion and static streams. These can encompass both the same target in different motion states (e.g. stationary vs flying bird), and different targets in their respective motion states (e.g. flying bird vs swimming fish). The aim here is to make detection as easy as possible for the classifier (some things are easier to see with motion, others static), while incoperating target types desired by the user.
+
+![Motion Examples 1](https://github.com/user-attachments/assets/fefe09f0-46bc-49f3-b18d-0fa1afdcc48d)
+
+_Example of static and motion frames from the same section of video_
  
 You can then optionally use secondary classifiers to identify featues within primary classes (making your model hierarchical). When you specify these, anything found by a primary classifier will be cropped and sent to the secondary classifier (e.g. male vs female classification for the primary class of a stationary bird). This can allow you to separate the tasks of detection and feature extraction. See the [fly](#complex-hierarchical-example) and [gull](#motion-strategy) examples for a somewhat complex mix. There is nuance to utilising these settings effectively. You might not want all primary classes to be sent to a secondary classifier, such as a fly in flight (its wings are a blur, so it's not possible to determine the sex, so flying flies are ignored by the secondary classifiers). For the highest computational efficiecy, specify a single primary class and let the secondary classifiers (which are much faster as they use cropped regions) do more work.
 
