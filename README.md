@@ -50,6 +50,10 @@ You can then optionally use secondary classifiers to identify featues within pri
 
 _Examples of secondary classifiers within the same primary motion class, these being suface and dive within the primary class of swim_
 
+![Motion Examples 3](https://github.com/user-attachments/assets/003ccbb4-9fdf-44b1-9599-4c868dca284c)
+
+_Examples of secondary classifiers within the same primary static class, these being rest and fanning within the primary class of perch_
+
 #### Simple tracking example
 
 Tracking moths flying against a moving background using only the motion stream (_BehaveAI_settings.ini_ file):
@@ -119,6 +123,12 @@ _Figure showing the different motion strategies (exponential vs sequential), plu
 Two different user-selectable motion strategies are available; the ‘_exponential_’ method calculates the absolute difference between the current frame and the previous frames, exponentially smoothing over successive frames to show different temporal ranges in different colour channels. With this mode, a moving object creates a white ‘difference’ image that leaves behind a motion blur that fades from white to blue, to green, to red. Increasing the exponential smoothing weights allows this method to show events further back in time at almost no extra computational cost when running the classifier because there is no need to re-load any previous frames. This mode is better able to convey changes in speed within each frame; accelerating objects will outpace their red tail, creating a blue-to-green streak, while deceleration will allow the red tail to catch up, creating yellow-to-red tails.
 
 The ‘_sequential_’ method uses discrete frames rather than exponential smoothing, with colours coding the differences between the previous 3 frames (white, blue, green and red going back through time respectively), and is suited to classifying movements over this short range of frames while preserving more spatial information (e.g. rather than a smooth tail, an animal’s characteristic wing shapes will remain visible over all four frames). The motion false colour is then optionally blended with the luminance channel to provide greater context – combining motion information with static luminance. The exponential weightings, false-colour composition, and degree of luminance blending are all user-adjustable. Frame skipping can also be used to perform measurements over a larger number of frames (representing a longer time-span) at no additional processing costs (e.g. suited to slow-moving objects whose behaviour is more apparent across a longer span of video).
+
+In certain cases, the motion stream may not be the best option for classifying activities. An example of this is when the camera itself is moving, meaning that all parts of the image will be subject to motion traces from previous frames, thus obscuring behaviours. As such, it is important to use the annotation interface to assess videos via both the motion and static streams, to determin which is most suitable for classifying behaviours.
+
+![Motion Examples 4](https://github.com/user-attachments/assets/90f0f3ad-dd57-4572-8d1d-eb29f693e82c)
+
+_Example of a case where the static stream may be preferable to the motion stream due to camera movement_
 
 ### Parameters
 TLDR: The only things you really must change to fit your project are the primary and secondary classes (and each needs keys and colours associated). Have a look at the motion in your examples and consider tweaking the strategy. The defaults for everything else will likely get you started. Other than tracking and Kalman filter settings, you can't change the values mid-way through annotation.
