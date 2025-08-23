@@ -52,7 +52,7 @@ _Examples of secondary classifiers within the same primary motion class, these b
 
 ![Motion Examples 3](https://github.com/user-attachments/assets/003ccbb4-9fdf-44b1-9599-4c868dca284c)
 
-_Examples of secondary classifiers within the same primary static class, these being rest and fanning within the primary class of perch_
+_Examples of secondary classifiers within the same primary static class, these being rest and fan within the primary class of perch_
 
 #### Simple tracking example
 
