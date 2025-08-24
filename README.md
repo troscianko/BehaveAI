@@ -212,6 +212,10 @@ Once you've got an initial annotation dataset (e.g. 50-100 annotations), click _
 
 Once you've trained an initial model the annotation script it will use this in a semi-supervised 'auto-annotation' fashion, attempting to automatically detect and classify things as you annotate. This will show you where the model is working well, and where it's not (closing the training loop). Use this opportunity to correct any errors it's making. Add things that it misses (false negatives), remove any incorrect detections (false positives), redraw boxes that are missaligned, and correct objects that are missclassfied. Importantly, you can also add plain background frames (with nothing annotated) in cases where it's falsely detecting elements of the background.
 
+![Annotation Example 1](https://github.com/user-attachments/assets/97ebd2ef-6c6b-4c80-be7d-8b1c4f45e7c4)
+
+_Example of auto-annotation functionality_
+
 Also focus on those borderline cases where the model isn't confident (based on the confidence scores appended to boxes). Remember to press 'enter' as before to save the new annotations on each frame. Aim to increase your annotation set - perhaps doubling the size. Now re-run the BehaveAI_classify_track.py script and it will note that you've added more annotations and ask whether you want to re-train the model. Select _yes_ and it will do so. You can repeat this auto-annotation cycle until you achieve the model performance and versatility required, helping to avoid annotating more than necessary, and also avoiding over-fitting.
 
 <img width="2245" src="https://github.com/troscianko/BehaveAI/blob/Toshea111-patch-1/BehaveAI%20Examples.png" />
