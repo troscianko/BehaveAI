@@ -119,12 +119,14 @@ try:
 
 	lum_weight = float(config['DEFAULT'].get('lum_weight', '0.7'))
 	strategy = config['DEFAULT'].get('strategy', 'exponential')
+	chromatic_tail_only = config['DEFAULT']['chromatic_tail_only'].lower()
 	primary_conf_thresh = float(config['DEFAULT'].get('primary_conf_thresh', '0.5'))
 	secondary_conf_thresh = float(config['DEFAULT'].get('secondary_conf_thresh', '0.5'))
 	rgb_multipliers = [float(x) for x in config['DEFAULT']['rgb_multipliers'].split(',')]
 	line_thickness = int(config['DEFAULT'].get('line_thickness', '1'))
 	font_size = float(config['DEFAULT'].get('font_size', '0.5'))
 	# ~ cross_blocking = config['DEFAULT']['cross_blocking'].lower()
+	iou_thresh = float(config['DEFAULT'].get('iou_thresh', '0.95'))
 	motion_blocks_static = config['DEFAULT']['motion_blocks_static'].lower()
 	static_blocks_motion = config['DEFAULT']['static_blocks_motion'].lower()
 	save_empty_frames = config['DEFAULT']['save_empty_frames'].lower()
@@ -382,6 +384,7 @@ elements = ["BehaveAI Video:", video_label, "ESC=quit BACKSPACE=clear u=undo ENT
 video_name = ' '.join(elements)
 
 cv2.namedWindow(video_name, cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_NORMAL)
+
 
 
 # UI functions
@@ -965,104 +968,199 @@ def save_annotation():
 			)
 			cv2.imwrite(crop_path, static_crop)
 
+
+	# ~ # Save grey box coordinates
+	# ~ mask_content = ""
+	# ~ for gx1, gy1, gx2, gy2 in grey_boxes:
+		# ~ mask_content += f"{gx1} {gy1} {gx2} {gy2}\n"
+	
+	# ~ # Save to both static and motion directories
+	# ~ static_mask_path = os.path.join(static_target_lbl_dir, f"{base_filename}.mask.txt")
+	# ~ motion_mask_path = os.path.join(motion_target_lbl_dir, f"{base_filename}.mask.txt")
+	
+	# ~ for path in [static_mask_path, motion_mask_path]:
+		# ~ with open(path, 'w') as f:
+			# ~ f.write(mask_content)
+
+	# Create mask directories
+	static_mask_dir = static_target_lbl_dir.replace('labels', 'masks')
+	motion_mask_dir = motion_target_lbl_dir.replace('labels', 'masks')
+	os.makedirs(static_mask_dir, exist_ok=True)
+	os.makedirs(motion_mask_dir, exist_ok=True)
+
+	# Save grey box coordinates to mask files
+	mask_content = ""
+	for gx1, gy1, gx2, gy2 in grey_boxes:
+		mask_content += f"{gx1} {gy1} {gx2} {gy2}\n"
+	
+	# Write mask files
+	mask_filename = f"{base_filename}.mask.txt"
+	static_mask_path = os.path.join(static_mask_dir, mask_filename)
+	motion_mask_path = os.path.join(motion_mask_dir, mask_filename)
+	
+	with open(static_mask_path, 'w') as f:
+		f.write(mask_content)
+	with open(motion_mask_path, 'w') as f:
+		f.write(mask_content)
+
 	print(f"Saved #{annot_count} frame {frame_number} -> {annot_type}")
 
 	annot_count += 1
 
 
-def auto_annotate():
-		# Collect all primary detections
-		# ~ all_detections = []
-		global boxes
+def iou(box1, box2):
+	xa = max(box1[0], box2[0]); ya = max(box1[1], box2[1])
+	xb = min(box1[2], box2[2]); yb = min(box1[3], box2[3])
+	inter = max(0, xb-xa) * max(0, yb-ya)
+	area1 = (box1[2]-box1[0])*(box1[3]-box1[1])
+	area2 = (box2[2]-box2[0])*(box2[3]-box2[1])
+	prop1 = inter/area1 
+	prop2 = inter/area2
+	# return the larger proportional overlap - e.g. if one box is entirely inside another, this will return a 1.0, whereas the previous wouldn't
+	if prop1 > prop2:
+		return prop1 if prop1 > 0 else 0
+	else:
+		return prop2 if prop2 > 0 else 0
+
+## remove overlapping detections	
+def non_max_suppression(box_list):
+	"""Remove overlapping detections keeping highest confidence box."""
+	if len(box_list) == 0:
+		return []
+	
+	# Calculate overall confidence for each box
+	confidences = []
+	for box in box_list:
+		if hierarchical_mode:
+			conf = box[6]
+		else:
+			conf = box[5]
+
+		confidences.append(conf)
+	
+	# Sort by confidence (descending)
+	sorted_indices = sorted(range(len(box_list)), key=lambda i: confidences[i], reverse=True)
+	suppressed = [False] * len(box_list)
+	keep = []
+	
+	for i in range(len(sorted_indices)):
+		idx_i = sorted_indices[i]
+		if suppressed[idx_i]:
+			continue
+			
+		keep.append(box_list[idx_i])
+		box_i = box_list[idx_i]
+		coords_i = (box_i[0], box_i[1], box_i[2], box_i[3])
 		
-		# Primary static detection
-		if primary_static_classes[0] != '0' and model_static != None:
-			results_static = model_static.predict(fr, conf=primary_conf_thresh, verbose=False)
-			for box in results_static[0].boxes:
-				# ~ coords = tuple(map(int, box.xyxy[0].tolist()))
-				class_idx = int(box.cls[0])
-				primary_class = primary_static_classes[class_idx]
-				conf = float(box.conf[0])
-				x1, y1, x2, y2 = map(int, box.xyxy[0])
+		for j in range(i + 1, len(sorted_indices)):
+			idx_j = sorted_indices[j]
+			if suppressed[idx_j]:
+				continue
+				
+			box_j = box_list[idx_j]
+			coords_j = (box_j[0], box_j[1], box_j[2], box_j[3])
+			
+			if iou(coords_i, coords_j) > iou_thresh:
+				suppressed[idx_j] = True
+				
+	return keep
 
-				if hierarchical_mode:
-					# crop and run secondary classifier on static image
-					if len(secondary_static_classes) >= 2:
-						sec_model = secondary_static_models.get(primary_class, None)
-						sec_classes = secondary_static_classes
-						crop_img = fr
-					# Fallback to motion secondary model if static not available
-					elif len(secondary_motion_classes) >= 2:
-						sec_model = secondary_motion_models.get(primary_class, None)
-						sec_classes = secondary_motion_classes
-						crop_img = motion_image if primary_motion_classes[0] != '0' else fr
+def auto_annotate():
+	# Collect all primary detections
+	# ~ all_detections = []
+	global boxes
 	
-					# Get the cropped region
-					crop = None
-					if crop_img is not None:
-						crop = crop_img[y1:y2, x1:x2]
-					
-					secondary_class = primary_class
-					secondary_conf = 1.0
-					secondary_class_idx = -1
+	# Primary static detection
+	if primary_static_classes[0] != '0' and model_static != None:
+		results_static = model_static.predict(fr, conf=primary_conf_thresh, verbose=False)
+		for box in results_static[0].boxes:
+			# ~ coords = tuple(map(int, box.xyxy[0].tolist()))
+			class_idx = int(box.cls[0])
+			primary_class = primary_static_classes[class_idx]
+			conf = float(box.conf[0])
+			x1, y1, x2, y2 = map(int, box.xyxy[0])
 
-					# Run secondary classification if we have a model and valid crop
-					if sec_model and crop is not None and crop.size > 0:
-						sec_results = sec_model.predict(crop, verbose=False)
-						if sec_results[0].probs is not None:
-							secondary_class_idx = sec_results[0].probs.top1
-							secondary_conf = sec_results[0].probs.top1conf.item()
-							secondary_class = sec_model.names[secondary_class_idx]
-	
-					boxes.append((x1, y1, x2, y2, class_idx, secondary_class_idx, conf, secondary_conf))#conf 1 & 2 need separating
-					
+			if hierarchical_mode:
+				# crop and run secondary classifier on static image
+				if len(secondary_static_classes) >= 2:
+					sec_model = secondary_static_models.get(primary_class, None)
+					sec_classes = secondary_static_classes
+					crop_img = fr
+				# Fallback to motion secondary model if static not available
+				elif len(secondary_motion_classes) >= 2:
+					sec_model = secondary_motion_models.get(primary_class, None)
+					sec_classes = secondary_motion_classes
+					crop_img = motion_image if primary_motion_classes[0] != '0' else fr
 
-				else:
-					boxes.append((x1, y1, x2, y2, class_idx, conf))
+				# Get the cropped region
+				crop = None
+				if crop_img is not None:
+					crop = crop_img[y1:y2, x1:x2]
+				
+				secondary_class = primary_class
+				secondary_conf = 1.0
+				secondary_class_idx = -1
+
+				# Run secondary classification if we have a model and valid crop
+				if sec_model and crop is not None and crop.size > 0:
+					sec_results = sec_model.predict(crop, verbose=False)
+					if sec_results[0].probs is not None:
+						secondary_class_idx = sec_results[0].probs.top1
+						secondary_conf = sec_results[0].probs.top1conf.item()
+						secondary_class = sec_model.names[secondary_class_idx]
+
+				boxes.append((x1, y1, x2, y2, class_idx, secondary_class_idx, conf, secondary_conf))#conf 1 & 2 need separating
+				
+
+			else:
+				boxes.append((x1, y1, x2, y2, class_idx, conf))
 
 
-		# Primary motion detection
-		if primary_motion_classes[0] != '0' and model_motion != None:
-			results_motion = model_motion.predict(motion_image, conf=primary_conf_thresh, verbose=False)
-			for box in results_motion[0].boxes:
-				class_idx = int(box.cls[0])
-				primary_class = primary_motion_classes[class_idx]
-				conf = float(box.conf[0])
-				x1, y1, x2, y2 = map(int, box.xyxy[0])
+	# Primary motion detection
+	if primary_motion_classes[0] != '0' and model_motion != None:
+		results_motion = model_motion.predict(motion_image, conf=primary_conf_thresh, verbose=False)
+		for box in results_motion[0].boxes:
+			class_idx = int(box.cls[0])
+			primary_class = primary_motion_classes[class_idx]
+			conf = float(box.conf[0])
+			x1, y1, x2, y2 = map(int, box.xyxy[0])
 
-				if hierarchical_mode:
-					# crop and run secondary classifier on static image
-					if len(secondary_static_classes) >= 2:
-						sec_model = secondary_static_models.get(primary_class, None)
-						sec_classes = secondary_static_classes
-						crop_img = fr
-					# Fallback to motion secondary model if static not available
-					elif len(secondary_motion_classes) >= 2:
-						sec_model = secondary_motion_models.get(primary_class, None)
-						sec_classes = secondary_motion_classes
-						crop_img = motion_image if primary_motion_classes[0] != '0' else fr
-	
-					# Get the cropped region
-					crop = None
-					if crop_img is not None:
-						crop = crop_img[y1:y2, x1:x2]
-					
-					secondary_class = primary_class
-					secondary_conf = 1.0
-					secondary_class_idx = -1
+			if hierarchical_mode:
+				# crop and run secondary classifier on static image
+				if len(secondary_static_classes) >= 2:
+					sec_model = secondary_static_models.get(primary_class, None)
+					sec_classes = secondary_static_classes
+					crop_img = fr
+				# Fallback to motion secondary model if static not available
+				elif len(secondary_motion_classes) >= 2:
+					sec_model = secondary_motion_models.get(primary_class, None)
+					sec_classes = secondary_motion_classes
+					crop_img = motion_image if primary_motion_classes[0] != '0' else fr
 
-					# Run secondary classification if we have a model and valid crop
-					if sec_model and crop is not None and crop.size > 0:
-						sec_results = sec_model.predict(crop, verbose=False)
-						if sec_results[0].probs is not None:
-							secondary_class_idx = sec_results[0].probs.top1
-							secondary_conf = sec_results[0].probs.top1conf.item()
-							secondary_class = sec_model.names[secondary_class_idx]
-	
-					boxes.append((x1, y1, x2, y2, class_idx + len(primary_static_classes), secondary_class_idx, conf, secondary_conf))#conf 1 & 2 need separating
-					
-				else:
-					boxes.append((x1, y1, x2, y2, class_idx + len(primary_static_classes), conf))
+				# Get the cropped region
+				crop = None
+				if crop_img is not None:
+					crop = crop_img[y1:y2, x1:x2]
+				
+				secondary_class = primary_class
+				secondary_conf = 1.0
+				secondary_class_idx = -1
+
+				# Run secondary classification if we have a model and valid crop
+				if sec_model and crop is not None and crop.size > 0:
+					sec_results = sec_model.predict(crop, verbose=False)
+					if sec_results[0].probs is not None:
+						secondary_class_idx = sec_results[0].probs.top1
+						secondary_conf = sec_results[0].probs.top1conf.item()
+						secondary_class = sec_model.names[secondary_class_idx]
+
+				boxes.append((x1, y1, x2, y2, class_idx + len(primary_static_classes), secondary_class_idx, conf, secondary_conf))#conf 1 & 2 need separating
+				
+			else:
+				boxes.append((x1, y1, x2, y2, class_idx + len(primary_static_classes), conf))
+
+	if boxes:
+		boxes = non_max_suppression(boxes)
 
 
 
@@ -1119,11 +1217,20 @@ while True:
 			
 			if frame_count > frame_skip:
 				frame_count = 0
-				
-		blue = cv2.addWeighted(gray, lum_weight, diffs[0], rgb_multipliers[2], motion_threshold)
-		green = cv2.addWeighted(gray, lum_weight, diffs[1], rgb_multipliers[1], motion_threshold)
-		red = cv2.addWeighted(gray, lum_weight, diffs[2], rgb_multipliers[0], motion_threshold)
-		
+
+		if chromatic_tail_only == 'true':
+			tb = cv2.subtract(diffs[0], diffs[1])	
+			tr = cv2.subtract(diffs[2], diffs[1])
+			tg = cv2.subtract(diffs[1], diffs[0])
+					
+			blue = cv2.addWeighted(gray, lum_weight, tb, rgb_multipliers[2], motion_threshold)
+			green = cv2.addWeighted(gray, lum_weight, tg, rgb_multipliers[1], motion_threshold)
+			red = cv2.addWeighted(gray, lum_weight, tr, rgb_multipliers[0], motion_threshold)
+		else:
+			blue = cv2.addWeighted(gray, lum_weight, diffs[0], rgb_multipliers[2], motion_threshold)
+			green = cv2.addWeighted(gray, lum_weight, diffs[1], rgb_multipliers[1], motion_threshold)
+			red = cv2.addWeighted(gray, lum_weight, diffs[2], rgb_multipliers[0], motion_threshold)
+			
 		motion_image = cv2.merge((blue, green, red)).astype(np.uint8)
 	
 

@@ -110,6 +110,7 @@ try:
 	expB = float(config['DEFAULT'].get('expB', '0.8'))
 	lum_weight = float(config['DEFAULT'].get('lum_weight', '0.7'))
 	strategy = config['DEFAULT'].get('strategy', 'exponential')
+	chromatic_tail_only = config['DEFAULT']['chromatic_tail_only'].lower()
 	rgb_multipliers = [float(x) for x in config['DEFAULT']['rgb_multipliers'].split(',')]
 	primary_conf_thresh = float(config['DEFAULT'].get('primary_conf_thresh', '0.5'))
 	secondary_conf_thresh = float(config['DEFAULT'].get('secondary_conf_thresh', '0.5'))
@@ -623,11 +624,21 @@ def process_video(file):
 					prev_frames[2] = prev_frames[1]
 					prev_frames[1] = prev_frames[0]
 					prev_frames[0] = gray
-					
-				blue = cv2.addWeighted(gray, lum_weight, diffs[0], rgb_multipliers[2], motion_threshold)
-				green = cv2.addWeighted(gray, lum_weight, diffs[1], rgb_multipliers[1], motion_threshold)
-				red = cv2.addWeighted(gray, lum_weight, diffs[2], rgb_multipliers[0], motion_threshold)
-				
+
+
+				if chromatic_tail_only == 'true':
+					tb = cv2.subtract(diffs[0], diffs[1])	
+					tr = cv2.subtract(diffs[2], diffs[1])
+					tg = cv2.subtract(diffs[1], diffs[0])
+							
+					blue = cv2.addWeighted(gray, lum_weight, tb, rgb_multipliers[2], motion_threshold)
+					green = cv2.addWeighted(gray, lum_weight, tg, rgb_multipliers[1], motion_threshold)
+					red = cv2.addWeighted(gray, lum_weight, tr, rgb_multipliers[0], motion_threshold)
+				else:
+					blue = cv2.addWeighted(gray, lum_weight, diffs[0], rgb_multipliers[2], motion_threshold)
+					green = cv2.addWeighted(gray, lum_weight, diffs[1], rgb_multipliers[1], motion_threshold)
+					red = cv2.addWeighted(gray, lum_weight, diffs[2], rgb_multipliers[0], motion_threshold)
+
 				motion_image = cv2.merge((blue, green, red)).astype(np.uint8)
 	
 			# Collect all primary detections
