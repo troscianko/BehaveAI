@@ -204,12 +204,11 @@ if hierarchical_mode:
 			# Check if model exists
 			if not os.path.exists(weights_path):
 				print(f'Secondary static model for "{primary_class}" not found')
-				secondary_motion_models[primary_class] = '0'
+				# ~ secondary_motion_models[primary_class] = '0'
 			else:
 				print(f'Secondary static model for "{primary_class}" found')
-			
-			# Load the trained model
-			secondary_static_models[primary_class] = YOLO(weights_path)
+				# Load the trained model
+				secondary_static_models[primary_class] = YOLO(weights_path)
 
 
 		# ~ print(f"secondary_static_models {secondary_static_models}")
@@ -239,7 +238,7 @@ if hierarchical_mode:
 			# Check if model exists
 			if not os.path.exists(weights_path):
 				print(f'Secondary motion model for "{primary_class}" not found')
-				secondary_motion_models[primary_class] = '0'
+				# ~ secondary_motion_models[primary_class] = '0'
 			else:
 				print(f'Secondary motion model for "{primary_class}" found')
 				# Load the trained model
