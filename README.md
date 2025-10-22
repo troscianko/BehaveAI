@@ -27,7 +27,7 @@ A CUDA-enabled GPU speeds up the training significantly, but the framework works
 
 ### Download the scripts:
 
-Download the BehaveAI files and place them in a working directory on your system. Also make a directory here called 'clips' where you place the videos you'll use for annotation (this is not essential, but placing them here will allow you to alter the motion settings and rebuild the annotation library at a later date). 
+[Download](https://github.com/troscianko/BehaveAI/archive/refs/heads/main.zip) the BehaveAI files and place them in a working directory on your system. Also make a directory here called 'clips' where you place the videos you'll use for annotation (this is not essential, but placing them here will allow you to alter the motion settings and rebuild the annotation library at a later date). 
 
 ### Windows auto install & launch:
 Double-click _Windows_Launcher.bat_ and the first time it runs it will set up your python virtual environment and install required libraries. It will attempt to install GPU drivers if they're available, but these vary between system - follow the prompts. Once installed you can just double-click this file again to launch BehaveAI.
@@ -44,7 +44,7 @@ pip install opencv-python numpy ultralytics scipy PyYAML
  
 Run the BehaveAI.py script (either from the command line, [Anaconda](https://docs.conda.io/projects/conda/en/latest/user-guide/install/index.html), or an IDE such as [Geany](https://github.com/geany/geany), [Jupyter](https://github.com/jupyter/notebook), [Spyder](https://github.com/spyder-ide/spyder), or [Visual Studio Code](https://github.com/microsoft/vscode)). This will bring up the launcher GUI:
 
-<img width="600" alt="Launcher GUI" src="https://github.com/user-attachments/assets/e9a7e7da-d3e9-435a-82dc-6ddd6b1c8c76" />
+<img width="600" alt="Launcher GUI" src="https://github.com/user-attachments/assets/c119d32f-fab1-4d47-9cda-5ecdf338d635" />
 
 Click _Annotate_ and select a file for annotation. Once you've done enough annotating click _Train & batch classify_. 
  
