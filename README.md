@@ -1,4 +1,5 @@
-<img width="450" height="76" alt="BehaveAi logo" src="https://github.com/user-attachments/assets/73c30b1b-d73c-4f63-8783-13270bc14b8e" />
+<img width="400" height="69" alt="BehaveAI_400" src="https://github.com/user-attachments/assets/6fb5cd16-d266-4e8b-9513-1734a45813bf" />
+
 
 # A framework for detecting, classifying and tracking moving objects
 
@@ -48,6 +49,8 @@ Run the BehaveAI.py script (either from the command line, [Anaconda](https://doc
 Click _Annotate_ and select a file for annotation. Once you've done enough annotating click _Train & batch classify_. 
  
 ## Setting parameters
+
+<img width="550" alt="BehaveAI structure" src="https://github.com/user-attachments/assets/1e00ffda-7c52-4388-9a9b-fa35c5294f05" />
 
 You need to adjust the _BehaveAI_settings.ini_ file](#setting-parameters) to fit your needs using a text editor. Have a read through the [table](#parameters) below to see what each parameter controls. Note that each class needs an associated keyboard hotkey and colour code or it'll throw an error - see the existing format. You can chose between [YOLO versions](https://github.com/ultralytics/ultralytics/tree/main?tab=readme-ov-file#-documentation) (e.g. YOLOv8 or YOLO11), and [model sizes](https://github.com/ultralytics/ultralytics?tab=readme-ov-file#-models) (e.g. n=nano or s=small). You can also specify what proportion of annotations should be automatically allocated to training and validation (you can manually move the files around later if you'd like though - just be sure to move both images and labels between the 'train' and 'val' subdirectories).
 
@@ -131,7 +134,8 @@ dominant_source = motion
 
 ### Motion strategy
 
-<img src="https://github.com/user-attachments/assets/46c94f90-5102-466b-91dc-a38d56f3c2dc" width="400"/>
+<img src="https://github.com/user-attachments/assets/60743d69-9e88-4ceb-923c-0b7796f0ce00" width="900"/>
+
 
 _Figure showing the different motion strategies (exponential vs sequential), plus the function of lum_weight and frame_skip, of a gull taking flight_
 
