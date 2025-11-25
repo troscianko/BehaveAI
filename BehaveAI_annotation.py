@@ -1365,11 +1365,11 @@ while True:
 				show_mode =1 # motion false colour
 			grey_mode = False
 			
-	elif key == 83:  # Right arrow
+	elif key == 83 or key == 93:  # Right arrow or ]
 		frame_number = min(frame_number + 1, total_frames - 1)
 		frame_updated = True
 		cv2.setTrackbarPos('Frame', video_name, frame_number)
-	elif key == 81:  # Left arrow
+	elif key == 81 or key == 91:  # Left arrow or [
 		frame_number = max(frame_number - 1, 0)
 		frame_updated = True
 		cv2.setTrackbarPos('Frame', video_name, frame_number)

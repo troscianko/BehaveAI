@@ -1125,12 +1125,12 @@ while True:
 				show_mode = 1
 			grey_mode = False
 			refresh_display()
-	elif key == 83:  # right arrow
+	elif key == 83 or key == 93:  # Right arrow or ]
 		current_idx = min(current_idx + 1, len(items) - 1)
 		cv2.setTrackbarPos('Item', video_name, current_idx)
 		load_item(current_idx)
 		frame_updated = True
-	elif key == 81:  # left arrow
+	elif key == 81 or key == 91:  # Left arrow or [
 		current_idx = max(current_idx - 1, 0)
 		cv2.setTrackbarPos('Item', video_name, current_idx)
 		load_item(current_idx)

@@ -1,0 +1,5 @@
+names:
+- motion
+nc: 1
+train: /home/jolyon/Documents/Work/Moth ALAN Grant/BehaveAI/Git/BehaveAI/annot_motion/images/train
+val: /home/jolyon/Documents/Work/Moth ALAN Grant/BehaveAI/Git/BehaveAI/annot_motion/images/val
