@@ -7,6 +7,9 @@ BehaveAI is a user-friendly tool that identifies and classifies animals and othe
 
 The framework also supports hierarchical models (e.g. detect something from it's movement, then work out what exactly it is from conventional static appearance, or vice-versa); and semi-supervised annotation, allowing the annotator to rapidly correct errors made by initial models, making for a more efficient and effective training process.
 
+![BehaveAI_flies](https://github.com/user-attachments/assets/99ae83fb-c001-4d5a-8338-0607a914d0c4)
+
+
 #### Key features:
 - Fast user-friendly annotation - in under an hour you can create a powerful tracking model
 - Identifies objects and their behaviour based on motion and/or static appearance
@@ -110,6 +113,9 @@ save_empty_frames = true
 dominant_source = confidence
 ```
 
+![BehaveAI_grassmoth](https://github.com/user-attachments/assets/ee4c1a23-3702-48a6-97f5-81cf7a890dc1)
+
+
 #### Complex hierarchical example
 
 Tracking flies on lilly pads using three primary motion classes (_walk_, _fly_ and _display_). When the flies aren't moving they're difficult to spot in the motion stream, so we also add a primary static class (_rest_) to find them from the static stream. However, the static classifier will be able to see all the cases of flies walking, flying or displaying that aren't classed as _rest_. This would likely confuse the static classifier because a walking fly looks a lot like a resting fly. So we add _motion_blocks_static = true_ to hide all the instances of walking, flying or displaying flies from the static classifier.
@@ -145,6 +151,8 @@ dominant_source = motion
 ### Motion strategy
 
 <img src="https://github.com/user-attachments/assets/60743d69-9e88-4ceb-923c-0b7796f0ce00" width="900"/>
+
+![BehaveAI_Gif](https://github.com/user-attachments/assets/a9bb20be-6dfb-4209-ba6c-56c14fb481fd)
 
 
 _Examples of the different motion strategies (exponential vs sequential), plus the functions of lum_weight and frame_skip across species_
