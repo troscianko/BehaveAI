@@ -27,6 +27,7 @@ The framework also supports hierarchical models (e.g. detect something from it's
 [<img width="350" alt="Screenshot from 2025-11-04 17-39-02" src="https://github.com/user-attachments/assets/97a6dd4f-b96f-4bea-80ed-5dae832b0891" />](https://www.youtube.com/watch?v=YQG4497kzPY)
 [<img width="350" alt="Screenshot from 2025-11-04 17-38-49" src="https://github.com/user-attachments/assets/5d76855e-d24f-4107-a6b9-c13aa98e6f79" />](https://www.youtube.com/watch?v=PiX7Fp2F-Xk)
 
+<iframe width="560" height="315" src="https://www.youtube.com/embed/YQG4497kzPY?si=d-bObuqvwjtvdrzN" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
 
 ## Prerequisites & installation
 
