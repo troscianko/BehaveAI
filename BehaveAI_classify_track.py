@@ -34,7 +34,7 @@ def ncnn_files_exist(ncnn_dir):
 	has_bin = any(f.endswith(".bin") for f in os.listdir(ncnn_dir))
 	return has_param and has_bin
 
-def ensure_ncnn_export(weights_path, timeout=300):
+def ensure_ncnn_export(weights_path, task, timeout=300):
 	"""
 	Ensure an NCNN conversion exists for weights_path.
 	Returns the ncnn_dir on success, None on failure (falls back to .pt).
@@ -46,7 +46,7 @@ def ensure_ncnn_export(weights_path, timeout=300):
 
 	try:
 		print(f"Exporting {weights_path} -> NCNN (this may take a while)...")
-		model = YOLO(weights_path)
+		model = YOLO(weights_path, task=task)
 		# Use Ultralytics export API. This creates the folder "<base>_ncnn_model".
 		# Some installs can be slow; we try and catch errors below.
 		model.export(format="ncnn")
@@ -65,7 +65,7 @@ def ensure_ncnn_export(weights_path, timeout=300):
 		print(f"Warning: NCNN export failed for {weights_path}: {e}")
 		return None
 
-def load_model_with_ncnn_preference(weights_path):
+def load_model_with_ncnn_preference(weights_path, task):
 	"""
 	Attempt to use NCNN if available (or convert it). If conversion or loading fails,
 	fall back to the original PyTorch .pt path.
@@ -74,7 +74,7 @@ def load_model_with_ncnn_preference(weights_path):
 	# If a .pt was not provided (maybe already a folder), just try loading directly
 	if not weights_path.endswith(".pt"):
 		try:
-			return YOLO(weights_path)
+			return YOLO(weights_path, task=task)
 		except Exception as e:
 			print(f"Error loading model {weights_path}: {e}")
 			raise
@@ -84,21 +84,21 @@ def load_model_with_ncnn_preference(weights_path):
 	if ncnn_files_exist(ncnn_dir):
 		try:
 			print(f"Loading NCNN model from {ncnn_dir}")
-			return YOLO(ncnn_dir)
+			return YOLO(ncnn_dir, task=task)
 		except Exception as e:
 			print(f"Failed to load NCNN model at {ncnn_dir}: {e} (falling back to .pt)")
 
 	# Otherwise attempt conversion (one-time). If it fails, fall back to .pt.
-	exported = ensure_ncnn_export(weights_path)
+	exported = ensure_ncnn_export(weights_path, task)
 	if exported:
 		try:
-			return YOLO(exported)
+			return YOLO(exported, task=task)
 		except Exception as e:
 			print(f"Failed to load NCNN-exported model {exported}: {e} (falling back to .pt)")
 
 	# Finally, fallback to direct .pt load
 	print(f"Using original weights (PyTorch) at {weights_path}")
-	return YOLO(weights_path)
+	return YOLO(weights_path, task=task)
 # --------------------------------------------------------------------
 
 
@@ -486,7 +486,7 @@ if hierarchical_mode:
 
 			# Load the trained model
 			if use_ncnn == 'true':
-				secondary_static_models[primary_class] = load_model_with_ncnn_preference(weights_path)
+				secondary_static_models[primary_class] = load_model_with_ncnn_preference(weights_path, "classify")
 			else:
 				secondary_static_models[primary_class] = YOLO(weights_path)
 
@@ -519,7 +519,7 @@ if hierarchical_mode:
 
 			# Load the trained model
 			if use_ncnn == 'true':
-				secondary_motion_models[primary_class] = load_model_with_ncnn_preference(weights_path)
+				secondary_motion_models[primary_class] = load_model_with_ncnn_preference(weights_path, "classify")
 			else:
 				secondary_motion_models[primary_class] = YOLO(weights_path)
 				
@@ -747,13 +747,13 @@ def process_video(file):
 
 	if primary_static_classes[0] != '0':
 		if use_ncnn == 'true':
-			model_static = load_model_with_ncnn_preference(primary_static_model_path)
+			model_static = load_model_with_ncnn_preference(primary_static_model_path, "detect")
 		else:
 			model_static = YOLO(primary_static_model_path)
 		 
 	if primary_motion_classes[0] != '0':
 		if use_ncnn == 'true':
-			model_motion = load_model_with_ncnn_preference(primary_motion_model_path)
+			model_motion = load_model_with_ncnn_preference(primary_motion_model_path, "detect")
 		else:
 			model_motion = YOLO(primary_motion_model_path)
 		
