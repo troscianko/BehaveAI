@@ -38,7 +38,7 @@ A CUDA-enabled GPU speeds up the training significantly, but the framework works
 
 ### Download the scripts:
 
-[Download](https://github.com/troscianko/BehaveAI/archive/refs/heads/main.zip) the BehaveAI files and place them in a working directory on your system. Also make a directory here called 'clips' where you place the videos you'll use for annotation (this is not essential, but placing them here will allow you to alter the motion settings and rebuild the annotation library at a later date). 
+First, create a project working directory. Next, [download](https://github.com/troscianko/BehaveAI/archive/refs/heads/main.zip) the BehaveAI files, unzip, and place them in your working directory. Note that if you start another project, you should copy across all the scripts to the new working directory. Inside your working directory we reccomend making a subdirectory called 'clips' where you place the videos you'll use for annotation (this is not essential, but placing them here will allow you to alter the motion settings and rebuild the annotation library at a later date).
 
 ### Windows auto install & launch:
 Double-click _Windows_Launcher.bat_ and the first time it runs it will set up your python virtual environment and install required libraries. It will attempt to install GPU drivers if they're available, but these vary between system - follow the prompts. Once installed you can just double-click this file again to launch BehaveAI.
