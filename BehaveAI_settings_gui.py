@@ -523,35 +523,45 @@ class SettingsEditorApp(tk.Tk):
 		tab3 = ttk.Frame(notebook)
 		notebook.add(tab3, text='Model type')
 
-		ttk.Label(tab3, text='Primary classifier').grid(row=0, column=0, sticky='w', padx=8, pady=(8,0))
+		ttk.Label(tab3, text='Validation frequency').grid(row=0, column=0, sticky='w', padx=8, pady=(8,0))
+		self.val_frequency_var = tk.DoubleVar(value=0.2)
+		ttk.Spinbox(tab3, from_=0.0, to=1.0, increment=0.01, textvariable=self.val_frequency_var, width=6, command=self._set_dirty).grid(row=0, column=1, sticky='w', padx=8)
+
+		ttk.Label(tab3, text='Primary classifier').grid(row=1, column=0, sticky='w', padx=8, pady=(8,0))
 		self.primary_classifier_var = tk.StringVar(value='yolo11n.pt')
-		ttk.Combobox(tab3, values=CLASSIFIER_OPTIONS, textvariable=self.primary_classifier_var).grid(row=0, column=1, sticky='w', padx=8, pady=(8,0))
+		ttk.Combobox(tab3, values=CLASSIFIER_OPTIONS, textvariable=self.primary_classifier_var).grid(row=1, column=1, sticky='w', padx=8, pady=(8,0))
 		self.primary_classifier_var.trace_add('write', lambda *a: self._set_dirty())
 
-		ttk.Label(tab3, text='Primary epochs').grid(row=1, column=0, sticky='w', padx=8, pady=(6,0))
+		ttk.Label(tab3, text='Primary epochs').grid(row=2, column=0, sticky='w', padx=8, pady=(6,0))
 		self.primary_epochs_var = tk.IntVar(value=100)
-		ttk.Spinbox(tab3, from_=1, to=10000, textvariable=self.primary_epochs_var, width=8, command=self._set_dirty).grid(row=1, column=1, sticky='w', padx=8)
+		ttk.Spinbox(tab3, from_=1, to=10000, textvariable=self.primary_epochs_var, width=8, command=self._set_dirty).grid(row=2, column=1, sticky='w', padx=8)
 
-		ttk.Label(tab3, text='Secondary classifier').grid(row=2, column=0, sticky='w', padx=8, pady=(6,0))
+		ttk.Label(tab3, text='Secondary classifier').grid(row=3, column=0, sticky='w', padx=8, pady=(6,0))
 		self.secondary_classifier_var = tk.StringVar(value='yolo11n-cls.pt')
 		secondary_opts = [m.replace('.pt','-cls.pt') for m in CLASSIFIER_OPTIONS if m.startswith('yolo')]
-		ttk.Combobox(tab3, values=secondary_opts, textvariable=self.secondary_classifier_var).grid(row=2, column=1, sticky='w', padx=8)
+		ttk.Combobox(tab3, values=secondary_opts, textvariable=self.secondary_classifier_var).grid(row=3, column=1, sticky='w', padx=8)
 		self.secondary_classifier_var.trace_add('write', lambda *a: self._set_dirty())
 
-		ttk.Label(tab3, text='Secondary epochs').grid(row=3, column=0, sticky='w', padx=8, pady=(6,0))
+		ttk.Label(tab3, text='Secondary epochs').grid(row=4, column=0, sticky='w', padx=8, pady=(6,0))
 		self.secondary_epochs_var = tk.IntVar(value=100)
-		ttk.Spinbox(tab3, from_=1, to=10000, textvariable=self.secondary_epochs_var, width=8, command=self._set_dirty).grid(row=3, column=1, sticky='w', padx=8)
+		ttk.Spinbox(tab3, from_=1, to=10000, textvariable=self.secondary_epochs_var, width=8, command=self._set_dirty).grid(row=4, column=1, sticky='w', padx=8)
 
 		self.use_ncnn_var = tk.BooleanVar(value=False)
-		ttk.Checkbutton(tab3, text='use_ncnn', variable=self.use_ncnn_var, command=self._set_dirty).grid(row=4, column=0, sticky='w', padx=8, pady=(8,0))
+		ttk.Checkbutton(tab3, text='use_ncnn', variable=self.use_ncnn_var, command=self._set_dirty).grid(row=5, column=0, sticky='w', padx=8, pady=(8,0))
 
-		ttk.Label(tab3, text='Primary confidence thresh').grid(row=5, column=0, sticky='w', padx=8, pady=(6,0))
+		ttk.Label(tab3, text='Primary confidence thresh').grid(row=6, column=0, sticky='w', padx=8, pady=(6,0))
 		self.primary_conf_var = tk.DoubleVar(value=0.5)
-		ttk.Spinbox(tab3, from_=0.0, to=1.0, increment=0.01, textvariable=self.primary_conf_var, width=6, command=self._set_dirty).grid(row=5, column=1, sticky='w', padx=8)
+		ttk.Spinbox(tab3, from_=0.0, to=1.0, increment=0.01, textvariable=self.primary_conf_var, width=6, command=self._set_dirty).grid(row=6, column=1, sticky='w', padx=8)
 
-		ttk.Label(tab3, text='Secondary confidence thresh').grid(row=6, column=0, sticky='w', padx=8, pady=(6,0))
+		ttk.Label(tab3, text='Secondary confidence thresh').grid(row=7, column=0, sticky='w', padx=8, pady=(6,0))
 		self.secondary_conf_var = tk.DoubleVar(value=0.5)
-		ttk.Spinbox(tab3, from_=0.0, to=1.0, increment=0.01, textvariable=self.secondary_conf_var, width=6, command=self._set_dirty).grid(row=6, column=1, sticky='w', padx=8)
+		ttk.Spinbox(tab3, from_=0.0, to=1.0, increment=0.01, textvariable=self.secondary_conf_var, width=6, command=self._set_dirty).grid(row=7, column=1, sticky='w', padx=8)
+
+		ttk.Label(tab3, text='Dominant source').grid(row=8, column=0, sticky='w', padx=8, pady=(8,0))
+		self.dominant_source_var = tk.StringVar(value='confidence')
+		ttk.Combobox(tab3, values=['confidence', 'motion', 'static'], textvariable=self.dominant_source_var, state='readonly').grid(row=8, column=1, sticky='w', padx=8, pady=(8,0))
+		self.dominant_source_var.trace_add('write', lambda *a: self._set_dirty())
+
 
 		# TAB 4: Tracking
 		tab4 = ttk.Frame(notebook)
@@ -574,7 +584,7 @@ class SettingsEditorApp(tk.Tk):
 		ttk.Spinbox(tab4, from_=0.0, to=1.0, increment=0.01, textvariable=self.iou_var, width=6, command=self._set_dirty).grid(row=3, column=1, sticky='w', padx=8)
 
 		# Kalman subsection
-		ttk.Label(tab4, text='Kalman filter (section [kalman])').grid(row=4, column=0, sticky='w', padx=8, pady=(12,0))
+		ttk.Label(tab4, text='Kalman filter').grid(row=4, column=0, sticky='w', padx=8, pady=(12,0))
 		ttk.Label(tab4, text='Process noise position').grid(row=5, column=0, sticky='w', padx=8)
 		self.kalman_pos_var = tk.DoubleVar(value=0.01)
 		ttk.Entry(tab4, textvariable=self.kalman_pos_var).grid(row=5, column=1, sticky='w', padx=8)
@@ -688,6 +698,7 @@ class SettingsEditorApp(tk.Tk):
 		# ~ self.scale_factor_var.set(float(d.get('scale_factor', fallback='1.0')))
 
 		# model type
+		self.val_frequency_var.set(float(d.get('val_frequency', fallback='0.2')))
 		self.primary_classifier_var.set(d.get('primary_classifier', fallback='yolo11n.pt'))
 		self.primary_epochs_var.set(int(d.get('primary_epochs', fallback='100')))
 		self.secondary_classifier_var.set(d.get('secondary_classifier', fallback='yolo11n-cls.pt'))
@@ -695,6 +706,8 @@ class SettingsEditorApp(tk.Tk):
 		self.use_ncnn_var.set(self._str_to_bool(d.get('use_ncnn', fallback='false')))
 		self.primary_conf_var.set(float(d.get('primary_conf_thresh', fallback='0.5')))
 		self.secondary_conf_var.set(float(d.get('secondary_conf_thresh', fallback='0.5')))
+		self.dominant_source_var.set(d.get('dominant_source', fallback='confidence'))
+		
 
 		# tracking
 		self.match_distance_var.set(int(d.get('match_distance_thresh', fallback='200')))
@@ -776,11 +789,11 @@ class SettingsEditorApp(tk.Tk):
 		new_default['static_blocks_motion'] = str(self.static_blocks_motion_var.get()).lower()
 		new_default['ignore_secondary'] = ''  # preserve empty default unless you expose it in GUI
 		new_default['save_empty_frames'] = 'true'  # preserve default unless exposed
-		new_default['dominant_source'] = 'confidence'
+		new_default['dominant_source'] = self.dominant_source_var.get()
 		new_default['scale_factor'] = '1.0'
 		new_default['line_thickness'] = str(self.line_thickness_var.get())
 		new_default['font_size'] = str(self.font_size_var.get())
-		new_default['val_frequency'] = str(0.2)
+		new_default['val_frequency'] = str(self.val_frequency_var.get())
 	
 		# motion strategy
 		new_default['strategy'] = self.strategy_var.get()
