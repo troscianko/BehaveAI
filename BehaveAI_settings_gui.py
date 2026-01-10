@@ -16,6 +16,7 @@ import tkinter.font as tkfont
 import configparser
 import os
 import sys
+import yaml
 
 INI_DEFAULT_PATH = os.path.join(os.getcwd(), 'BehaveAI_settings.ini')
 
@@ -32,6 +33,20 @@ CLASSIFIER_OPTIONS = [
 ]
 
 RESERVED_HOTKEYS = {'u', 'g'}
+
+DEFAULT_CLASS_COLORS = [
+	(0, 220, 255),
+	(0, 255, 97),
+	(236, 255, 0),
+	(255, 188, 0),
+	(255, 97, 97),
+	(255, 62, 190),
+]
+
+DEFAULT_FALLBACK_COLOR = (200, 200, 200)
+
+# Global counter used to pick the next color / hotkey
+NEW_ROW_COUNTER = 0
 
 # ----------------------- Helpers for parsing/serialising -----------------------
 
@@ -199,26 +214,35 @@ class ClassRow(ttk.Frame):
 
 # ----------------------- Class list editor -----------------------
 
-# ----------------------- Class list editor -----------------------
-
 class ClassListEditor(ttk.Frame):
+	"""
+	Simple ClassListEditor that uses a global counter to choose the next default
+	color and hotkey for newly-added rows.
+
+	Behavior:
+	  - If add_row() is called with color=None and/or hotkey=None, the editor
+		will pick defaults based on NEW_ROW_COUNTER and then increment it.
+	  - If caller provides explicit color or hotkey, those are used and the
+		counter is NOT advanced (keeps behaviour simple).
+	  - Supports suppression of confirm dialogs via set_suppress_confirm(True).
+	  - confirm_modify callback is invoked before structural changes (add/clear/remove)
+		unless suppressed.
+	"""
 	def __init__(self, master, title, on_change=None, initial=None, confirm_modify=None, *args, **kwargs):
-		"""
-		confirm_modify: optional callable -> bool. If provided, it will be called before
-		any structural change (add/clear/remove) and if it returns False the operation
-		is cancelled.
-		"""
 		super().__init__(master, *args, **kwargs)
 		self.on_change = on_change
 		self.rows = []
 		self.confirm_modify = confirm_modify
-		# New flag to suppress confirmation dialogs (useful during initial load)
 		self.suppress_confirm = False
 
-		# Title label - now created only here (prevents duplicate titles in parent)
-		font_bold = tkfont.nametofont("TkDefaultFont").copy()
-		font_bold.configure(weight="bold", size=11)
-		ttk.Label(self, text=title, font=font_bold).grid(row=0, column=0, sticky='w')
+		# Draw a bold title inside the editor (prevents duplicate titles)
+		try:
+			import tkinter.font as tkfont
+			font_bold = tkfont.nametofont("TkDefaultFont").copy()
+			font_bold.configure(weight="bold", size=11)
+			ttk.Label(self, text=title, font=font_bold).grid(row=0, column=0, sticky='w')
+		except Exception:
+			ttk.Label(self, text=title).grid(row=0, column=0, sticky='w')
 
 		btn_frame = ttk.Frame(self)
 		btn_frame.grid(row=0, column=1, sticky='e')
@@ -226,45 +250,88 @@ class ClassListEditor(ttk.Frame):
 		ttk.Button(btn_frame, text='Clear', command=self.clear).grid(row=0, column=1, padx=(6,0))
 
 		self.allow_ignore_secondary = title.lower().startswith('primary')
-
 		self.rows_frame = ttk.Frame(self)
 		self.rows_frame.grid(row=1, column=0, columnspan=2, sticky='we', pady=(6,0))
 
 		if initial:
 			for label, hotkey, color in initial:
+				# Use provided values when loading initial content
 				self._create_row(label, hotkey, color)
 
 	def set_suppress_confirm(self, val: bool):
-		"""When True, structural operations (add/clear/remove) will not prompt confirmation."""
 		self.suppress_confirm = bool(val)
 
-	def add_row(self, label='', hotkey='', color=(200,200,200), ignore_secondary=False):
-		# Ask for confirmation if needed (skip when suppressed)
-		if not self.suppress_confirm and callable(self.confirm_modify):
+	def _confirm_allowed(self):
+		"""Helper to call confirm_modify when needed (respect suppress flag)."""
+		if self.suppress_confirm:
+			return True
+		if callable(self.confirm_modify):
 			try:
-				if not self.confirm_modify():
-					return
+				return bool(self.confirm_modify())
 			except Exception:
-				# On failure call, be conservative and block
-				return
+				return False
+		return True
 
-		# expose optional ignore flag to callers (used by load_ini)
-		self._create_row(label, hotkey, color, ignore_secondary)
+	def _pick_defaults_and_advance_counter(self):
+		"""Pick color and hotkey from global counter and increment it."""
+		global NEW_ROW_COUNTER
+		idx = NEW_ROW_COUNTER
+		# pick color from palette, fallback when palette exhausted
+		if idx < len(DEFAULT_CLASS_COLORS):
+			color = DEFAULT_CLASS_COLORS[idx]
+		else:
+			color = DEFAULT_FALLBACK_COLOR
+		# pick hotkey: numeric 1..9 first, then a..z (single char)
+		if idx < 9:
+			hotkey = str(idx + 1)
+		else:
+			# letters after digits (wrap if > 9+26)
+			letter_idx = (idx - 9) % 26
+			hotkey = chr(ord('a') + letter_idx)
+		NEW_ROW_COUNTER += 1
+		return hotkey, color
+
+	def add_row(self, label='', hotkey=None, color=None, ignore_secondary=False):
+		"""
+		Add a new ClassRow. If hotkey/color are None, choose defaults using
+		the global counter (and advance it). If explicit values are provided,
+		do not touch the counter.
+		"""
+		# Ask for confirmation if needed
+		if not self._confirm_allowed():
+			return
+
+		# Auto-assign defaults if caller didn't provide them
+		assigned_hotkey = hotkey
+		assigned_color = color
+		if hotkey is None or hotkey == '':
+			assigned_hotkey, assigned_color_from_counter = self._pick_defaults_and_advance_counter()
+			# If color was explicitly provided as None as well, use the color from the counter;
+			# otherwise if caller provided color but not hotkey, use provided color and the counter's hotkey.
+			if color is None:
+				assigned_color = assigned_color_from_counter
+		else:
+			# caller provided a hotkey; only auto-assign color if color is None
+			if color is None:
+				# pick color using counter but don't increment the counter for simplicity:
+				# reuse the current counter index but do not advance (keeps deterministic if user sets hotkeys manually)
+				# We'll still use the counter value to pick a color so rows remain varied.
+				global NEW_ROW_COUNTER
+				idx = NEW_ROW_COUNTER
+				assigned_color = DEFAULT_CLASS_COLORS[idx] if idx < len(DEFAULT_CLASS_COLORS) else DEFAULT_FALLBACK_COLOR
+
+		# If both provided explicitly, we do not change NEW_ROW_COUNTER (simple behaviour)
+
+		# Create the UI row
+		self._create_row(label, assigned_hotkey or '', assigned_color or DEFAULT_FALLBACK_COLOR, ignore_secondary)
 		if self.on_change:
 			self.on_change()
 
 	def _create_row(self, label, hotkey, color, ignore_secondary=False):
-		# Remove callback: called by the ClassRow when its Remove button is pressed.
+		# Remove callback for the row; respect confirm_modify unless suppressed
 		def _remove_and_mark(row):
-			# Ask for confirmation if needed (skip when suppressed)
-			if not self.suppress_confirm and callable(self.confirm_modify):
-				try:
-					if not self.confirm_modify():
-						return
-				except Exception:
-					return
-
-			# remove row from our list (if present) and destroy widget
+			if not self._confirm_allowed():
+				return
 			if row in self.rows:
 				try:
 					self.rows.remove(row)
@@ -281,7 +348,7 @@ class ClassListEditor(ttk.Frame):
 			self.rows_frame,
 			label=label,
 			hotkey=hotkey,
-			color=color,
+			color=color if color is not None else DEFAULT_FALLBACK_COLOR,
 			on_change=self.on_change,
 			remove_callback=_remove_and_mark,
 			show_ignore_secondary=self.allow_ignore_secondary,
@@ -291,14 +358,8 @@ class ClassListEditor(ttk.Frame):
 		self.rows.append(row)
 
 	def clear(self):
-		# Confirm if annot directories exist (skip when suppressed)
-		if not self.suppress_confirm and callable(self.confirm_modify):
-			try:
-				if not self.confirm_modify():
-					return
-			except Exception:
-				return
-
+		if not self._confirm_allowed():
+			return
 		for r in list(self.rows):
 			try:
 				r.destroy()
@@ -309,19 +370,18 @@ class ClassListEditor(ttk.Frame):
 			self.on_change()
 
 	def get(self):
-		"""Return a list of rows as (label, hotkey, (r,g,b), ignore_flag).
-		Skips empty-label rows (same behaviour as the original implementation)."""
+		"""Return list of (label, hotkey, (r,g,b), ignore_flag) skipping empty labels."""
 		out = []
 		for r in self.rows:
 			try:
 				label, hotkey, color, ignore = r.get()
 			except Exception:
-				# Defensive: if a row doesn't implement get() for some reason, skip it.
 				continue
 			if not label:
 				continue
 			out.append((label, hotkey, color, ignore))
 		return out
+
 
 
 # ----------------------- Main app -----------------------
@@ -734,6 +794,72 @@ class SettingsEditorApp(tk.Tk):
 			return False
 		return str(s).lower() in ('1', 'true', 'yes', 'on')
 
+
+	def _write_yaml_configs(self):
+		"""
+		Write static_annotations.yaml and motion_annotations.yaml into the project (settings) directory.
+		Create the expected annot_static/annot_motion directories if they don't exist.
+		"""
+		try:
+			# directories relative to the project_dir (which is dirname(ini_path))
+			static_train_images_dir = os.path.join(self.project_dir, 'annot_static', 'images', 'train')
+			static_val_images_dir   = os.path.join(self.project_dir, 'annot_static', 'images', 'val')
+			static_train_labels_dir = os.path.join(self.project_dir, 'annot_static', 'labels', 'train')
+			static_val_labels_dir   = os.path.join(self.project_dir, 'annot_static', 'labels', 'val')
+	
+			motion_train_images_dir = os.path.join(self.project_dir, 'annot_motion', 'images', 'train')
+			motion_val_images_dir   = os.path.join(self.project_dir, 'annot_motion', 'images', 'val')
+			motion_train_labels_dir = os.path.join(self.project_dir, 'annot_motion', 'labels', 'train')
+			motion_val_labels_dir   = os.path.join(self.project_dir, 'annot_motion', 'labels', 'val')
+	
+			# create directories (images + labels)
+			for d in (static_train_images_dir, static_val_images_dir,
+					  static_train_labels_dir, static_val_labels_dir,
+					  motion_train_images_dir, motion_val_images_dir,
+					  motion_train_labels_dir, motion_val_labels_dir):
+				os.makedirs(d, exist_ok=True)
+	
+			# gather class names from GUI editors (use label entries only)
+			try:
+				primary_static_classes = [label for (label, _, _, _) in self.class_editors['primary_static'].get()]
+				primary_motion_classes = [label for (label, _, _, _) in self.class_editors['primary_motion'].get()]
+			except Exception:
+				primary_static_classes = []
+				primary_motion_classes = []
+	
+			# YAML dicts (train/val paths are absolute)
+			static_yaml_dict = {
+				'train': os.path.abspath(static_train_images_dir),
+				'val':   os.path.abspath(static_val_images_dir),
+				'nc':	len(primary_static_classes),
+				'names': primary_static_classes,
+			}
+			motion_yaml_dict = {
+				'train': os.path.abspath(motion_train_images_dir),
+				'val':   os.path.abspath(motion_val_images_dir),
+				'nc':	len(primary_motion_classes),
+				'names': primary_motion_classes,
+			}
+	
+			static_yaml_output = os.path.join(self.project_dir, 'static_annotations.yaml')
+			motion_yaml_output = os.path.join(self.project_dir, 'motion_annotations.yaml')
+	
+			# write YAMLs, preserve order of names
+			with open(static_yaml_output, 'w') as yf:
+				yaml.safe_dump(static_yaml_dict, yf, sort_keys=False)
+			with open(motion_yaml_output, 'w') as yf:
+				yaml.safe_dump(motion_yaml_dict, yf, sort_keys=False)
+	
+			# Informational prints (visible if you run GUI from terminal)
+			print(f"Written static YOLO dataset config to {static_yaml_output}")
+			print(f"Written motion YOLO dataset config to {motion_yaml_output}")
+	
+		except Exception as e:
+			# warn user but don't prevent INI saving
+			messagebox.showwarning("YAML write error", f"Failed to write dataset YAMLs: {e}")
+
+
+
 	# ----------------------- Save -----------------------
 
 	def on_save(self):
@@ -864,6 +990,14 @@ class SettingsEditorApp(tk.Tk):
 	
 			# saved successfully
 			self._set_dirty(False)
+			
+			# attempt to create the annot_*/ directories and write dataset YAMLs now
+			try:
+				self._write_yaml_configs()
+			except Exception as e:
+				# _write_yaml_configs already shows a messagebox on failure; keep going.
+				pass			
+			
 			self.destroy()   # close the window on successful save
 	
 		except Exception as e:

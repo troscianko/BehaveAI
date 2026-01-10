@@ -5,7 +5,7 @@ import tkinter as tk
 from tkinter import filedialog
 from tkinter import messagebox
 import configparser
-import yaml
+# ~ import yaml
 import random
 import time
 from ultralytics import YOLO
@@ -357,38 +357,38 @@ if not video_path:
 	exit()
 
 
-# Create directories
-for d in [motion_train_images_dir, motion_val_images_dir, motion_train_labels_dir, motion_val_labels_dir]:
-	os.makedirs(d, exist_ok=True)
+# ~ # Create directories
+# ~ for d in [motion_train_images_dir, motion_val_images_dir, motion_train_labels_dir, motion_val_labels_dir]:
+	# ~ os.makedirs(d, exist_ok=True)
 
-for d in [static_train_images_dir, static_val_images_dir, static_train_labels_dir, static_val_labels_dir]:
-	os.makedirs(d, exist_ok=True)
+# ~ for d in [static_train_images_dir, static_val_images_dir, static_train_labels_dir, static_val_labels_dir]:
+	# ~ os.makedirs(d, exist_ok=True)
 
-# Write YAML config
+# ~ # Write YAML config
 
-# Static dataset YAML
-static_yaml_output = 'static_annotations.yaml'
-static_yaml_dict = {
-	'train': os.path.abspath(static_train_images_dir),
-	'val': os.path.abspath(static_val_images_dir),
-	'nc': len(primary_static_classes),
-	'names': primary_static_classes
-}
-with open(static_yaml_output, 'w') as yf:
-	yaml.dump(static_yaml_dict, yf)
-print(f"Written static YOLO dataset config to {static_yaml_output}")
+# ~ # Static dataset YAML
+# ~ static_yaml_output = 'static_annotations.yaml'
+# ~ static_yaml_dict = {
+	# ~ 'train': os.path.abspath(static_train_images_dir),
+	# ~ 'val': os.path.abspath(static_val_images_dir),
+	# ~ 'nc': len(primary_static_classes),
+	# ~ 'names': primary_static_classes
+# ~ }
+# ~ with open(static_yaml_output, 'w') as yf:
+	# ~ yaml.dump(static_yaml_dict, yf)
+# ~ print(f"Written static YOLO dataset config to {static_yaml_output}")
 
-# Motion dataset YAML
-motion_yaml_output = 'motion_annotations.yaml'
-motion_yaml_dict = {
-	'train': os.path.abspath(motion_train_images_dir),
-	'val': os.path.abspath(motion_val_images_dir),
-	'nc': len(primary_motion_classes),
-	'names': primary_motion_classes
-}
-with open(motion_yaml_output, 'w') as yf:
-	yaml.dump(motion_yaml_dict, yf)
-print(f"Written motion YOLO dataset config to {motion_yaml_output}")
+# ~ # Motion dataset YAML
+# ~ motion_yaml_output = 'motion_annotations.yaml'
+# ~ motion_yaml_dict = {
+	# ~ 'train': os.path.abspath(motion_train_images_dir),
+	# ~ 'val': os.path.abspath(motion_val_images_dir),
+	# ~ 'nc': len(primary_motion_classes),
+	# ~ 'names': primary_motion_classes
+# ~ }
+# ~ with open(motion_yaml_output, 'w') as yf:
+	# ~ yaml.dump(motion_yaml_dict, yf)
+# ~ print(f"Written motion YOLO dataset config to {motion_yaml_output}")
 
 capture = cv2.VideoCapture(video_path)
 total_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
