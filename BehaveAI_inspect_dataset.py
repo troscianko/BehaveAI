@@ -843,6 +843,171 @@ def load_item(idx):
 	# load labels and masks
 	load_labels_and_masks_for_item(item)
 
+	# ----------------- Link secondary crops to primary boxes -----------------
+	# Only run when hierarchical mode is enabled
+	if hierarchical_mode and boxes:
+		# tolerance for small rounding/resizing differences (px)
+		MATCH_TOL = 2
+
+		# derive video_label and frame_number from item's basename (split on last underscore)
+		if '_' in item['basename']:
+			video_label_guess, tail = item['basename'].rsplit('_', 1)
+			try:
+				frame_number_guess = int(tail)
+			except Exception:
+				frame_number_guess = None
+		else:
+			video_label_guess = item['basename']
+			frame_number_guess = None
+
+		# build map of boxes keyed by (x1, y1, primary_name) -> list of box indices
+		box_index = {}
+		for bi, b in enumerate(boxes):
+			# hierarchical box structure: (x1,y1,x2,y2, primary_cls, secondary_cls, conf, secondary_conf)
+			bx1 = int(round(b[0])); by1 = int(round(b[1]))
+			primary_idx = b[4] if len(b) > 4 else None
+			primary_name = primary_classes[primary_idx] if primary_idx is not None and primary_idx < len(primary_classes) else None
+			key = (bx1, by1, primary_name)
+			box_index.setdefault(key, []).append(bi)
+
+		# helper to parse crop filename format: <video_label>_<frame>_<x1>_<y1>.<ext>
+		def _parse_crop_filename(fn):
+			stem = os.path.splitext(fn)[0]
+			parts = stem.split('_')
+			if len(parts) < 4:
+				return None
+			try:
+				y1 = int(parts[-1]); x1 = int(parts[-2]); frame = int(parts[-3])
+				video_label_part = '_'.join(parts[:-3])
+				return video_label_part, frame, x1, y1
+			except Exception:
+				return None
+
+		# helper to map secondary dir-name to index in secondary_classes
+		sec_name_to_idx = {name: idx for idx, name in enumerate(secondary_classes)}
+
+		# search both cropped base dirs (motion then static)
+		for base_crop_dir in (motion_cropped_base_dir, static_cropped_base_dir):
+			if not base_crop_dir or not os.path.isdir(base_crop_dir):
+				continue
+			# primary class directories inside the cropped base dir
+			for primary_name in os.listdir(base_crop_dir):
+				prim_dir = os.path.join(base_crop_dir, primary_name)
+				if not os.path.isdir(prim_dir):
+					continue
+				# secondary class directories under the primary dir
+				for secondary_name in os.listdir(prim_dir):
+					sec_dir = os.path.join(prim_dir, secondary_name)
+					if not os.path.isdir(sec_dir):
+						continue
+					sec_idx = sec_name_to_idx.get(secondary_name)
+					if sec_idx is None:
+						# not in configured secondary list, skip
+						continue
+					# scan crop files
+					for fn in os.listdir(sec_dir):
+						lower = fn.lower()
+						if not lower.endswith(('.jpg', '.jpeg', '.png')):
+							continue
+						parsed = _parse_crop_filename(fn)
+						if parsed is None:
+							continue
+						vlabel_part, fn_frame, x1_fn, y1_fn = parsed
+						# must be same video label and frame
+						if vlabel_part != video_label_guess or fn_frame != frame_number_guess:
+							continue
+						# exact key match first (primary_name must match so we attach secondary to correct primary)
+						key = (x1_fn, y1_fn, primary_name)
+						matched = False
+						if key in box_index:
+							for bi in box_index[key]:
+								b = boxes[bi]
+								# update secondary index in place (preserve other fields)
+								if len(b) >= 8:
+									boxes[bi] = (b[0], b[1], b[2], b[3], b[4], sec_idx, b[6], b[7])
+								else:
+									# convert shorter tuple into hierarchical format
+									primary_cls = b[4] if len(b) > 4 else 0
+									conf = b[6] if len(b) > 6 else -1
+									boxes[bi] = (b[0], b[1], b[2], b[3], primary_cls, sec_idx, conf, -1)
+								matched = True
+						if matched:
+							continue
+						# if not exact, try small neighbourhood search
+						for dx in range(-MATCH_TOL, MATCH_TOL + 1):
+							if matched:
+								break
+							for dy in range(-MATCH_TOL, MATCH_TOL + 1):
+								cand = (x1_fn + dx, y1_fn + dy, primary_name)
+								if cand in box_index:
+									for bi in box_index[cand]:
+										b = boxes[bi]
+										if len(b) >= 8:
+											boxes[bi] = (b[0], b[1], b[2], b[3], b[4], sec_idx, b[6], b[7])
+										else:
+											primary_cls = b[4] if len(b) > 4 else 0
+											conf = b[6] if len(b) > 6 else -1
+											boxes[bi] = (b[0], b[1], b[2], b[3], primary_cls, sec_idx, conf, -1)
+										matched = True
+										break
+									if matched:
+										break
+							if matched:
+								break
+	# ----------------- END link secondary crops to primary boxes -----------------
+
+	# ----------------- BEGIN: record original secondary crop files for this item -----------------
+	# Build a set of full paths for any secondary crop files that exist now for this item.
+	# Stored on item['_orig_secondary_crops'] so we can detect deletions later.
+	orig_crops = set()
+	# parse video_label and frame_number from basename
+	if '_' in item['basename']:
+		_video_label_part, _tail = item['basename'].rsplit('_', 1)
+		try:
+			_frame_num = int(_tail)
+		except Exception:
+			_frame_num = None
+	else:
+		_video_label_part = item['basename']
+		_frame_num = None
+
+	# scan both cropped bases and collect matching filenames for this video/frame
+	for base_crop_dir in (motion_cropped_base_dir, static_cropped_base_dir):
+		if not base_crop_dir or not os.path.isdir(base_crop_dir):
+			continue
+		for primary_name in os.listdir(base_crop_dir):
+			primary_dir = os.path.join(base_crop_dir, primary_name)
+			if not os.path.isdir(primary_dir):
+				continue
+			for secondary_name in os.listdir(primary_dir):
+				sec_dir = os.path.join(primary_dir, secondary_name)
+				if not os.path.isdir(sec_dir):
+					continue
+				for fn in os.listdir(sec_dir):
+					low = fn.lower()
+					if not low.endswith(('.jpg', '.jpeg', '.png')):
+						continue
+					# try to parse pattern: <video_label>_<frame>_<x1>_<y1>.<ext>
+					stem = os.path.splitext(fn)[0]
+					parts = stem.split('_')
+					if len(parts) < 4:
+						continue
+					try:
+						y1_fn = int(parts[-1]); x1_fn = int(parts[-2]); frame_fn = int(parts[-3])
+						video_label_part_fn = '_'.join(parts[:-3])
+					except Exception:
+						continue
+					# only keep files for this item (same video label + same frame)
+					if video_label_part_fn == _video_label_part and frame_fn == _frame_num:
+						full = os.path.join(sec_dir, fn)
+						orig_crops.add(full)
+
+	# attach to item for later comparison in save
+	item['_orig_secondary_crops'] = orig_crops
+	# ----------------- END: record original secondary crop files for this item -----------------
+
+
+
 	# try to find and load video preview frames
 	# try to find and load video preview frames
 	# try to find and load video preview frames (replicating original sampling behaviour)
@@ -1086,6 +1251,150 @@ def save_annotation_and_overwrite_current():
 		motion_mask_path = os.path.join(motion_mask_dir, base + '.mask.txt')
 		with open(motion_mask_path, 'w') as f:
 			f.write(mask_content)
+
+
+	# ----------------- BEGIN: create/update secondary crop files for current boxes -----------------
+	# When in hierarchical_mode, write cropped images for each box that has a valid secondary index.
+	try:
+		if hierarchical_mode:
+			base = item['basename']  # already in the "<video>_<frame>" format
+			created_crops = set()
+			for b in boxes:
+				# unpack robustly for both hierarchical and non-hierarchical formats
+				if len(b) >= 6:
+					x1_b = int(round(b[0])); y1_b = int(round(b[1])); x2_b = int(round(b[2])); y2_b = int(round(b[3]))
+					primary_idx = int(b[4])
+					secondary_idx = int(b[5])
+				else:
+					continue
+
+				# skip if secondary not assigned
+				if secondary_idx is None or secondary_idx < 0:
+					continue
+
+				# safety checks for indices
+				if primary_idx < 0 or primary_idx >= len(primary_classes):
+					continue
+				if secondary_idx < 0 or secondary_idx >= len(secondary_classes):
+					continue
+
+				primary_name = primary_classes[primary_idx]
+				secondary_name = secondary_classes[secondary_idx]
+
+				# build expected filename exactly as original annot script used
+				fname = f"{base}_{x1_b}_{y1_b}.jpg"
+
+				# motion crop (if motion_cropped_base_dir exists)
+				if motion_cropped_base_dir:
+					m_dir = os.path.join(motion_cropped_base_dir, primary_name, secondary_name)
+					os.makedirs(m_dir, exist_ok=True)
+					m_path = os.path.join(m_dir, fname)
+					try:
+						crop = motion_ann_frame[y1_b:y2_b, x1_b:x2_b]
+						if hasattr(crop, "size") and crop.size:
+							cv2.imwrite(m_path, crop)
+							created_crops.add(m_path)
+					except Exception as e:
+						# best-effort: continue on error
+						print(f"Warning writing motion crop {m_path}: {e}")
+
+				# static crop (if static_cropped_base_dir exists)
+				if static_cropped_base_dir:
+					s_dir = os.path.join(static_cropped_base_dir, primary_name, secondary_name)
+					os.makedirs(s_dir, exist_ok=True)
+					s_path = os.path.join(s_dir, fname)
+					try:
+						crop = static_ann_frame[y1_b:y2_b, x1_b:x2_b]
+						if hasattr(crop, "size") and crop.size:
+							cv2.imwrite(s_path, crop)
+							created_crops.add(s_path)
+					except Exception as e:
+						print(f"Warning writing static crop {s_path}: {e}")
+
+			# ensure the item's record of original secondary crops includes newly created files
+			orig = item.get('_orig_secondary_crops', set())
+			# normalize to absolute paths (orig stored as absolute earlier)
+			orig.update(created_crops)
+			item['_orig_secondary_crops'] = orig
+	except Exception as e:
+		print(f"Warning during secondary-crop creation: {e}")
+	# ----------------- END: create/update secondary crop files for current boxes -----------------
+
+
+
+	# ----------------- BEGIN: remove deleted secondary crop files -----------------
+	# Delete any secondary crop images that were present when we loaded this item
+	# but are no longer matched to a surviving box. This removes from both
+	# motion_cropped_base_dir and static_cropped_base_dir locations.
+	try:
+		item = items[current_idx]
+		orig_crops = item.get('_orig_secondary_crops', set())
+		# parse video_label and frame_number from basename
+		if '_' in item['basename']:
+			video_label_part, tail = item['basename'].rsplit('_', 1)
+			try:
+				frame_num = int(tail)
+			except Exception:
+				frame_num = None
+		else:
+			video_label_part = item['basename']
+			frame_num = None
+
+		# build current expected crop file paths from boxes (both motion & static crop dirs)
+		current_crops = set()
+		if hierarchical_mode:
+			for b in boxes:
+				# box format: (x1, y1, x2, y2, primary_cls, secondary_cls, ..., ...)
+				if len(b) >= 6:
+					x1_b = int(round(b[0])); y1_b = int(round(b[1]))
+					primary_idx = b[4]; secondary_idx = b[5]
+					# only consider boxes that have an assigned secondary
+					if secondary_idx is None or secondary_idx < 0:
+						continue
+					# find names
+					if primary_idx is None or primary_idx >= len(primary_classes):
+						continue
+					if secondary_idx >= len(secondary_classes):
+						continue
+					primary_name = primary_classes[primary_idx]
+					secondary_name = secondary_classes[secondary_idx]
+					# expected filename
+					if frame_num is None:
+						continue
+					fname = f"{video_label_part}_{frame_num}_{x1_b}_{y1_b}.jpg"
+					# both crop locations (motion & static) may contain the files
+					m_path = os.path.join(motion_cropped_base_dir, primary_name, secondary_name, fname) if motion_cropped_base_dir else None
+					s_path = os.path.join(static_cropped_base_dir, primary_name, secondary_name, fname) if static_cropped_base_dir else None
+					if m_path: current_crops.add(m_path)
+					if s_path: current_crops.add(s_path)
+
+		# files to delete = orig - current
+		to_delete = orig_crops - current_crops
+		if to_delete:
+			for p in sorted(to_delete):
+				try:
+					if os.path.exists(p):
+						os.remove(p)
+						# try to rmdir parent if empty
+						parent = os.path.dirname(p)
+						try:
+							if os.path.isdir(parent) and not os.listdir(parent):
+								os.rmdir(parent)
+						except Exception:
+							# ignore dir-remove errors (concurrent files etc.)
+							pass
+				except Exception as e:
+					# best-effort: print error but continue
+					print(f"Warning: could not remove crop {p}: {e}")
+		# update stored original set to match current (so subsequent saves are incremental)
+		item['_orig_secondary_crops'] = (orig_crops - to_delete) | (current_crops & orig_crops)  # keep only existing ones
+	except Exception as e:
+		print(f"Warning during secondary-crop cleanup: {e}")
+	# ----------------- END: remove deleted secondary crop files -----------------
+
+
+
+
 
 	print(f"Saved and overwrote annotation for {base}")
 	annot_count += 1
