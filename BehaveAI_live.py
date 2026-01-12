@@ -501,10 +501,10 @@ class CameraProcessor:
 						# ~ print(f"Loaded secondary static model for primary '{p}'")
 						if use_ncnn == 'true':
 							self.secondary_static_models[p] = load_model_with_ncnn_preference(model_path, "classify")
-							print(f"Loaded secondary static model for primary '{p}'")
+							print(f"Loaded secondary static NCNN model for primary '{p}'")
 						else:
 							self.secondary_static_models[p] = YOLO(model_path)
-							print(f"Loaded secondary static model for primary '{p}'")
+							print(f"Loaded secondary static YOLO model for primary '{p}'")
 
 				except Exception as e:
 					print(f"Secondary static model load failed for {p}: {e}")
@@ -517,10 +517,10 @@ class CameraProcessor:
 						# ~ print(f"Loaded secondary motion model for primary '{p}'")
 						if use_ncnn == 'true':
 							self.secondary_motion_models[p] = load_model_with_ncnn_preference(model_path, "classify")
-							print(f"Loaded secondary motion YOLO model for primary '{p}'")
+							print(f"Loaded secondary motion NCNN model for primary '{p}'")
 						else:
 							self.secondary_static_models[p] = YOLO(model_path)
-							print(f"Loaded secondary motion NCNN model for primary '{p}'")
+							print(f"Loaded secondary motion YOLO model for primary '{p}'")
 				except Exception as e:
 					print(f"Secondary motion model load failed for {p}: {e}")
 
