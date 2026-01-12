@@ -388,24 +388,27 @@ secondary_static_hotkeys = 0
 				rd = self.stdout_rd if tag == 'stdout' else self.stderr_rd
 				line_stripped = line_plain.strip()
 
-				if is_progress_line(line_plain):
-					removed = False
-					for last_tag in ('last_insert_stdout', 'last_insert_stderr'):
-						ranges = self.output_area.tag_ranges(last_tag)
-						if ranges:
-							self.output_area.configure(state='normal')
-							self.output_area.delete(ranges[0], ranges[1])
-							self.output_area.tag_remove(last_tag, "1.0", "end")
-							self.output_area.configure(state='disabled')
-							removed = True
-					rd.write(line_plain + '\n')
-					self.last_progress_global = None
+				if line_plain.startswith('[ WARN:0@') or line_plain.startswith('[ERROR:0@'): # don't print OpenCV camera searching errors
+					continue
 				else:
-					if self.last_progress_global is not None and line_stripped == self.last_progress_global:
-						self.last_progress_global = None
-					else:
+					if is_progress_line(line_plain):
+						removed = False
+						for last_tag in ('last_insert_stdout', 'last_insert_stderr'):
+							ranges = self.output_area.tag_ranges(last_tag)
+							if ranges:
+								self.output_area.configure(state='normal')
+								self.output_area.delete(ranges[0], ranges[1])
+								self.output_area.tag_remove(last_tag, "1.0", "end")
+								self.output_area.configure(state='disabled')
+								removed = True
 						rd.write(line_plain + '\n')
 						self.last_progress_global = None
+					else:
+						if self.last_progress_global is not None and line_stripped == self.last_progress_global:
+							self.last_progress_global = None
+						else:
+							rd.write(line_plain + '\n')
+							self.last_progress_global = None
 				buf = b''
 
 			self.output_buffer[tag] = buf
