@@ -130,7 +130,7 @@ class ScriptRunnerApp:
 		for (label_text, script_name) in btn_names:
 			b = Button(self.button_frame, text=label_text,
 					   command=lambda s=script_name: self.run_script(s),
-					   width=14, state="disabled")
+					   width=16, state="disabled")
 			b.pack(side=tk.LEFT, padx=6)
 			self.buttons[script_name] = b
 
