@@ -9,7 +9,6 @@ This tool edits BehaveAI_settings.ini (default in current directory) and provide
 - Add/Remove classes for primary/secondary motion/static groups with label, hotkey and colour picker
 - Validation and a Save button (enabled at all times)
 """
-
 import tkinter as tk
 from tkinter import ttk, colorchooser, filedialog, messagebox
 import tkinter.font as tkfont
@@ -17,6 +16,12 @@ import configparser
 import os
 import sys
 import yaml
+import subprocess
+import shutil
+import glob
+import time
+from pathlib import Path
+import re
 
 INI_DEFAULT_PATH = os.path.join(os.getcwd(), 'BehaveAI_settings.ini')
 
@@ -404,6 +409,9 @@ class SettingsEditorApp(tk.Tk):
 		self.cfg = configparser.ConfigParser()
 		self.cfg.optionxform = str  # preserve case
 
+		# store loaded motion settings for later comparison
+		self._loaded_motion_settings = {}
+
 		self._build_ui()
 		self.load_ini(self.ini_path)
 
@@ -605,11 +613,6 @@ class SettingsEditorApp(tk.Tk):
 		self.frame_skip_var = tk.IntVar(value=0)
 		ttk.Spinbox(tab2, from_=0, to=10000, textvariable=self.frame_skip_var, width=8, command=self._set_dirty).grid(row=6, column=1, sticky='w', padx=8)
 
-		# ~ ttk.Label(tab2, text='Scale factor').grid(row=7, column=0, sticky='w', padx=8, pady=(6,0))
-		# ~ self.scale_factor_var = tk.DoubleVar(value=1.0)
-		# ~ ttk.Spinbox(tab2, from_=0.0, to=10.0, increment=0.2, textvariable=self.scale_factor_var, width=6, command=self._set_dirty).grid(row=7, column=1, sticky='w', padx=8)
-
-
 		# TAB 3: Model type
 		tab3 = ttk.Frame(notebook)
 		notebook.add(tab3, text='Model type')
@@ -779,7 +782,7 @@ class SettingsEditorApp(tk.Tk):
 		self.static_blocks_motion_var.set(self._str_to_bool(d.get('static_blocks_motion', fallback='false')))
 
 		# motion tab
-		self.strategy_var.set(d.get('strategy', fallback='sequential'))
+		self.strategy_var.set(d.get('strategy', fallback='exponential'))
 		self.chromatic_tail_only_var.set(self._str_to_bool(d.get('chromatic_tail_only', fallback='false')))
 		self.expA_var.set(float(d.get('expA', fallback='0.5')))
 		self.expB_var.set(float(d.get('expB', fallback='0.7')))
@@ -787,6 +790,19 @@ class SettingsEditorApp(tk.Tk):
 		self.rgb_mult_var.set(d.get('rgb_multipliers', fallback='2,2,2'))
 		self.frame_skip_var.set(int(d.get('frame_skip', fallback='0')))
 		# ~ self.scale_factor_var.set(float(d.get('scale_factor', fallback='1.0')))
+
+		# Save a snapshot of motion-related settings for later change detection
+		self._loaded_motion_settings = {
+			'strategy': str(d.get('strategy', fallback='sequential')),
+			'chromatic_tail_only': str(d.get('chromatic_tail_only', fallback='false')).lower(),
+			'expA': str(d.get('expA', fallback='0.5')),
+			'expB': str(d.get('expB', fallback='0.7')),
+			'lum_weight': str(d.get('lum_weight', fallback='0.5')),
+			'rgb_multipliers': str(d.get('rgb_multipliers', fallback='2,2,2')).replace(' ', ''),
+			'frame_skip': str(d.get('frame_skip', fallback='0')),
+			'motion_blocks_static': str(d.get('motion_blocks_static', fallback='false')).lower(),
+			'static_blocks_motion': str(d.get('static_blocks_motion', fallback='false')).lower(),
+		}
 
 		# model type
 		self.val_frequency_var.set(float(d.get('val_frequency', fallback='0.2')))
@@ -825,6 +841,7 @@ class SettingsEditorApp(tk.Tk):
 			return False
 		return str(s).lower() in ('1', 'true', 'yes', 'on')
 
+	# ----------------------- YAML writer -----------------------
 
 	def _write_yaml_configs(self):
 		"""
@@ -890,6 +907,124 @@ class SettingsEditorApp(tk.Tk):
 			messagebox.showwarning("YAML write error", f"Failed to write dataset YAMLs: {e}")
 
 
+	# ----------------------- Helpers for regeneration/backups -----------------------
+
+	def _has_existing_annotations(self):
+		"""Return True if annot_motion or annot_static contain any images/labels (train or val)."""
+		for base in ('annot_motion', 'annot_static'):
+			for sub in ('images/train', 'images/val', 'labels/train', 'labels/val'):
+				path = os.path.join(self.project_dir, base, sub)
+				if os.path.isdir(path):
+					# check for any files
+					try:
+						for _, _, files in os.walk(path):
+							for f in files:
+								if f and not f.startswith('.'):
+									return True
+					except Exception:
+						continue
+		return False
+
+	def _motion_settings_changed(self):
+		"""Compare loaded motion settings with current GUI values; return True if any differ."""
+		if not self._loaded_motion_settings:
+			# no baseline loaded -> consider as changed to be conservative
+			return True
+		curr = {
+			'strategy': str(self.strategy_var.get()),
+			'chromatic_tail_only': str(self.chromatic_tail_only_var.get()).lower(),
+			'expA': str(self.expA_var.get()),
+			'expB': str(self.expB_var.get()),
+			'lum_weight': str(self.lum_weight_var.get()),
+			'rgb_multipliers': str(self.rgb_mult_var.get()).replace(' ', ''),
+			'frame_skip': str(self.frame_skip_var.get()),
+			'motion_blocks_static': str(self.motion_blocks_static_var.get()).lower(),
+			'static_blocks_motion': str(self.static_blocks_motion_var.get()).lower(),
+		}
+		# strict string comparison is fine since we recorded strings originally
+		for k, v in curr.items():
+			if k not in self._loaded_motion_settings or str(self._loaded_motion_settings[k]) != str(v):
+				return True
+		return False
+
+	def _backup_dir(self, orig_path):
+		"""If orig_path exists, rename to orig_path_backupN where N is the next integer."""
+		if not os.path.isdir(orig_path):
+			return None
+		parent = os.path.dirname(orig_path)
+		base = os.path.basename(orig_path)
+		# find next available suffix (lowest unused integer)
+		n = 1
+		while True:
+			candidate = os.path.join(parent, f"{base}_backup{n}")
+			if not os.path.exists(candidate):
+				break
+			n += 1
+		try:
+			os.rename(orig_path, candidate)
+			return candidate
+		except Exception as e:
+			# return None on failure
+			print(f"Failed to backup {orig_path}: {e}")
+			return None
+	
+	
+	def _backup_primary_and_secondary_motion_models(self):
+		"""Rename model_primary_motion and model_secondary_motion* directories to backup names if they exist.
+	
+		Skip any directory that already ends with _backupN so backups are not re-backed-up.
+		"""
+		backed = []
+		primary_dir = os.path.join(self.project_dir, 'model_primary_motion')
+		if os.path.isdir(primary_dir):
+			b = self._backup_dir(primary_dir)
+			if b:
+				backed.append(b)
+	
+		# secondary directories start with 'model_secondary_motion'
+		# skip any names that already end with _backup<number>
+		backup_suffix_re = re.compile(r'_backup\d+$')
+		for name in sorted(os.listdir(self.project_dir)):
+			if not name.startswith('model_secondary_motion'):
+				continue
+			# ignore directories that are already backuped (name ends with _backupN)
+			if backup_suffix_re.search(name):
+				continue
+			path = os.path.join(self.project_dir, name)
+			if os.path.isdir(path):
+				b = self._backup_dir(path)
+				if b:
+					backed.append(b)
+		return backed
+
+	def _run_regenerate_script(self):
+		"""
+		Search for regenerate script and run it. Returns (success:bool, message:str).
+		Search order:
+		  1) sibling of this GUI script (same directory)
+		  2) project_dir
+		  3) current working directory
+		"""
+
+		script_name = "Regenerate_annotations.py"
+		launcher_dir = Path(__file__).resolve().parent
+		script_path = launcher_dir / script_name	
+
+		# Call script with current Python executable and pass the project INI path
+		cmd = [sys.executable, script_path, self.ini_path]
+		try:
+			# run in project_dir so script relative path resolution is consistent
+			proc = subprocess.run(cmd, cwd=self.project_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+			out = proc.stdout.strip()
+			err = proc.stderr.strip()
+			if proc.returncode != 0:
+				msg = f"Regeneration script failed (exit {proc.returncode}).\n\nstdout:\n{out}\n\nstderr:\n{err}"
+				return False, msg
+			# success
+			msg = f"Regeneration script finished successfully.\n\nstdout:\n{out}"
+			return True, msg
+		except Exception as e:
+			return False, f"Failed to run regeneration script: {e}"
 
 	# ----------------------- Save -----------------------
 
@@ -1018,7 +1153,18 @@ class SettingsEditorApp(tk.Tk):
 		if path_error:
 			messagebox.showwarning("Invalid paths", path_error)
 			return
-	
+
+		# Determine if we should prompt for regeneration AFTER saving:
+		should_prompt_regen = False
+		try:
+			motion_changed = self._motion_settings_changed()
+			existing_annotations = self._has_existing_annotations()
+			if motion_changed and existing_annotations:
+				should_prompt_regen = True
+		except Exception:
+			# conservative: prompt if unsure
+			should_prompt_regen = True
+
 		# ---- atomically replace defaults and write file ----
 		try:
 			# Replace defaults atomically
@@ -1034,9 +1180,36 @@ class SettingsEditorApp(tk.Tk):
 			# attempt to create the annot_*/ directories and write dataset YAMLs now
 			try:
 				self._write_yaml_configs()
-			except Exception as e:
+			except Exception:
 				# _write_yaml_configs already shows a messagebox on failure; keep going.
 				pass			
+
+			# If we should prompt for regeneration, ask now (after save so regenerate uses new settings)
+			if should_prompt_regen:
+				ans = messagebox.askyesno(
+					"Settings changed — rebuild annotation dataset?",
+					("You have changed settings that affect how the annotation images are generated,\n"
+					 "and the project already contains annotations. Rebuilding the annotation dataset\n"
+					 "is recommended. This operation may take some time. Do you want to rebuild now?\n\n"
+					 "If you choose Yes, existing primary and secondary motion model directories\n"
+					 "will be renamed to force retraining (they will be moved to *_backupN).")
+				)
+				if ans:
+					# 1) backup model_primary_motion and model_secondary_motion* directories
+					backed = self._backup_primary_and_secondary_motion_models()
+					if backed:
+						print("Backed up model directories:")
+						for b in backed:
+							print("  ", b)
+					else:
+						print("No primary/secondary motion model directories found to back up.")
+
+					# 2) run regeneration script
+					ok, msg = self._run_regenerate_script()
+					if ok:
+						messagebox.showinfo("Regeneration finished", "Dataset regeneration finished successfully.")
+					else:
+						messagebox.showwarning("Regeneration failed or missing", msg)
 			
 			self.destroy()   # close the window on successful save
 	

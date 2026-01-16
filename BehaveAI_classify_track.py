@@ -11,7 +11,7 @@ import shutil
 import tkinter as tk
 from tkinter import messagebox, filedialog
 import subprocess
-import config_watcher
+# ~ import config_watcher
 import sys
 
 
@@ -105,32 +105,32 @@ def load_model_with_ncnn_preference(weights_path, task):
 # ---------- Project-aware configuration loading --------------------------
 
 def pick_ini_via_dialog():
-    root = tk.Tk()
-    root.withdraw()
-    path = filedialog.askopenfilename(
-        title="Select BehaveAI settings INI",
-        filetypes=[("INI files", "*.ini"), ("All files", "*.*")]
-    )
-    root.destroy()
-    return path
+	root = tk.Tk()
+	root.withdraw()
+	path = filedialog.askopenfilename(
+		title="Select BehaveAI settings INI",
+		filetypes=[("INI files", "*.ini"), ("All files", "*.*")]
+	)
+	root.destroy()
+	return path
 
 # Determine config_path (accept project dir or direct INI path)
 if len(sys.argv) > 1:
-    arg = os.path.abspath(sys.argv[1])
-    if os.path.isdir(arg):
-        config_path = os.path.join(arg, "BehaveAI_settings.ini")
-    else:
-        config_path = arg
+	arg = os.path.abspath(sys.argv[1])
+	if os.path.isdir(arg):
+		config_path = os.path.join(arg, "BehaveAI_settings.ini")
+	else:
+		config_path = arg
 else:
-    config_path = pick_ini_via_dialog()
-    if not config_path:
-        tk.messagebox.showinfo("No settings file", "No settings INI selected — exiting.")
-        sys.exit(0)
+	config_path = pick_ini_via_dialog()
+	if not config_path:
+		tk.messagebox.showinfo("No settings file", "No settings INI selected — exiting.")
+		sys.exit(0)
 
 config_path = os.path.abspath(config_path)
 if not os.path.exists(config_path):
-    tk.messagebox.showerror("Missing settings", f"Configuration file not found: {config_path}")
-    sys.exit(1)
+	tk.messagebox.showerror("Missing settings", f"Configuration file not found: {config_path}")
+	sys.exit(1)
 
 # Set project directory to the INI parent and make it the working directory
 project_dir = os.path.dirname(config_path)
@@ -145,12 +145,12 @@ config.read(config_path)
 
 # Helper: resolve a path from INI (absolute or relative to project_dir)
 def resolve_project_path(value, fallback):
-    if value is None or str(value).strip() == '':
-        value = fallback
-    value = str(value)
-    if os.path.isabs(value):
-        return os.path.normpath(value)
-    return os.path.normpath(os.path.join(project_dir, value))
+	if value is None or str(value).strip() == '':
+		value = fallback
+	value = str(value)
+	if os.path.isabs(value):
+		return os.path.normpath(value)
+	return os.path.normpath(os.path.join(project_dir, value))
 
 # Read dataset / directory keys from INI (defaults are relative names inside the project)
 clips_dir_ini = config['DEFAULT'].get('clips_dir', 'clips')
@@ -299,11 +299,11 @@ if len(primary_motion_classes) > 0:
 		sys.exit(1)
 
 
-# check whether settings have been changed, and motion annotation library needs rebuilding 
-settings_changed = config_watcher.check_settings_changed(current_config_path=config_path, saved_config_path=None, model_dirs=['model_primary_motion'])
-# Globals for prompting/behaviour inside maybe_retrain
-regen_prompt_shown = False
-force_rebuild_motion = False
+# ~ # check whether settings have been changed, and motion annotation library needs rebuilding 
+# ~ settings_changed = config_watcher.check_settings_changed(current_config_path=config_path, saved_config_path=None, model_dirs=['model_primary_motion'])
+# ~ # Globals for prompting/behaviour inside maybe_retrain
+# ~ regen_prompt_shown = False
+# ~ force_rebuild_motion = False
 
 
 global_response = 0 # if 'yes' is selected for any model re-training, retraining should be perfoemd for all models
@@ -357,88 +357,33 @@ def count_images_in_dataset(path):
 
 
 def maybe_retrain(model_type, yaml_path, project_path, model_path, classifier, epochs, imgsz):
-	global global_response, regen_prompt_shown, force_rebuild_motion
+	"""
+	Decide whether to (re)train a model based on existence and image counts.
+	- If model_path exists and the recorded train_count differs from the current dataset,
+	  prompt the user to retrain (Yes/No).
+	- If model_path does not exist, perform first-time training.
+	Returns True if a training run was performed, False otherwise.
+	"""
 
-	# If settings have changed and we haven't asked yet, prompt the user whether
-	# they want to rebuild the annotation dataset now.
-	if settings_changed and not regen_prompt_shown:
-		regen_prompt_shown = True
-		root = tk.Tk()
-		root.withdraw()
-		msg = (
-			"Motion-related settings differ from the saved snapshot.\n\n"
-			"Do you want to rebuild the annotation dataset now?\n\n"
-			"If you choose Yes, the regeneration script will run and ALL motion models\n"
-			"will be rebuilt automatically (no further prompts for motion models)."
-		)
-		user_wants_regen = messagebox.askyesno("Rebuild annotations?", msg)
-		root.destroy()
-
-		if user_wants_regen:
-			print("User requested regeneration of annotations...")
-			rc = config_watcher.run_regeneration(regen_script='Regenerate_annotations.py', regen_args=None)
-			if rc == 0:
-				print("Regeneration script completed successfully.")
-			else:
-				print(f"Warning: regeneration script returned code {rc}.")
-			# Force automatic rebuild of motion models
-			force_rebuild_motion = True
-			# Also ensure we rebuild at least once
-			global_response = 1
-
-	# If the model already exists and we are forcing rebuild for motion models,
-	# and this is a motion model, rebuild it without asking.
+	# Determine whether this is a motion model by naming
 	is_motion_model = ('motion' in model_type.lower()) or ('secondary_motion' in project_path.lower()) or ('primary_motion' in project_path.lower())
 
+	# If model exists: compare recorded image count (train_count.txt) with current dataset
 	if os.path.exists(model_path):
-		# If force_rebuild_motion is set and this is a motion model, retrain silently
-		if force_rebuild_motion and is_motion_model:
-			print(f"Force-rebuilding (motion) model: {model_type}")
-			# Backup existing model
-			backup_dir = project_path + "_backup"
-			i = 1
-			while os.path.exists(f"{backup_dir}{i}"):
-				i += 1
-			final_backup = f"{backup_dir}{i}"
-			shutil.copytree(project_path, final_backup)
-			print(f"Existing model copied to {final_backup}")
-
-			start_weights = os.path.join(final_backup, "train", "weights", "best.pt")
-			print(f'Training new {model_type} model using existing weights...')
-			model = YOLO(start_weights)
-			model.train(
-				data=yaml_path,
-				epochs=epochs,
-				imgsz=imgsz,
-				project=project_path,
-				name="train",
-				exist_ok=True
-			)
-			print(f'Done training {model_type} model')
-			# Save new count (same behaviour as before)
-			current_count = count_images_in_dataset(yaml_path)
-			count_file = os.path.join(project_path, 'train_count.txt')
-			with open(count_file, 'w') as f:
-				f.write(str(current_count))
-			# Save config snapshot alongside the motion model for future checks
-			try:
-				config_watcher.save_config_with_model(project_path)
-			except Exception as e:
-				print(f"Warning: could not save settings snapshot with model: {e}")
-			return True
-
-		# Existing behaviour: compare counts and ask the user (GUI prompt)
 		if os.path.exists(os.path.join(project_path, 'train_count.txt')):
-			with open(os.path.join(project_path, 'train_count.txt'), 'r') as f:
-				last_count = int(f.read().strip())
+			try:
+				with open(os.path.join(project_path, 'train_count.txt'), 'r') as f:
+					last_count = int(f.read().strip())
+			except Exception:
+				last_count = -1
 		else:
 			last_count = -1
 
 		current_count = count_images_in_dataset(yaml_path)
 
 		if current_count != last_count:
-			root = tk.Tk()
-			root.withdraw()
+			# Ask user whether to retrain
+			root = tk.Tk(); root.withdraw()
 			msg = (
 				f"New annotations detected for '{model_type}' model.\n"
 				f"Image count changed from {last_count} to {current_count}.\n\n"
@@ -447,18 +392,20 @@ def maybe_retrain(model_type, yaml_path, project_path, model_path, classifier, e
 			response = messagebox.askyesno("Retrain model?", msg)
 			root.destroy()
 
-			if response or global_response == 1:
-				global_response = 1
-				# Backup and retrain (same flow as original)
+			if response:
+				# Backup existing model dir/project and retrain from its weights
 				backup_dir = project_path + "_backup"
 				i = 1
 				while os.path.exists(f"{backup_dir}{i}"):
 					i += 1
 				final_backup = f"{backup_dir}{i}"
-				shutil.copytree(project_path, final_backup)
-				print(f"Existing model copied to {final_backup}")
-				start_weights = os.path.join(final_backup, "train", "weights", "best.pt")
+				try:
+					shutil.copytree(project_path, final_backup)
+					print(f"Existing model copied to {final_backup}")
+				except Exception as e:
+					print(f"Warning: failed to backup {project_path}: {e}")
 
+				start_weights = os.path.join(final_backup, "train", "weights", "best.pt")
 				print(f'Training new {model_type} model using existing weights...')
 				model = YOLO(start_weights)
 				model.train(
@@ -470,17 +417,25 @@ def maybe_retrain(model_type, yaml_path, project_path, model_path, classifier, e
 					exist_ok=True
 				)
 				print(f'Done training {model_type} model')
+				# Update saved train count
 				with open(os.path.join(project_path, 'train_count.txt'), 'w') as f:
 					f.write(str(current_count))
-				# If this is a motion model, save the snapshot with the model
-				if is_motion_model:
-					try:
-						config_watcher.save_config_with_model(project_path)
-					except Exception as e:
-						print(f"Warning: could not save settings snapshot with model: {e}")
+				# copy existing settings ini file for reference (so you know which settings were used for each model)
+				os.makedirs(project_path, exist_ok=True)
+				# ~ dst = os.path.join(project_path, os.path.basename(config_path))
+				dst = os.path.join(project_path, 'saved_settings.ini')
+				try:
+					shutil.copy2(config_path, dst)
+					print(f"Saved settings snapshot to {dst}")
+				except Exception as e:
+					print(f"Warning: could not copy settings to model dir: {e}")
 				return True
+
+		# else counts match -> nothing to do
+		return False
+
 	else:
-		# First-time training (same behaviour as before), but save snapshot if it's a motion model
+		# Model missing -> do first-time training
 		print(f'{model_type} model not found, building it...')
 		model = YOLO(classifier)
 		model.train(
@@ -498,13 +453,18 @@ def maybe_retrain(model_type, yaml_path, project_path, model_path, classifier, e
 		with open(os.path.join(project_path, 'train_count.txt'), 'w') as f:
 			f.write(str(current_count))
 
-		if is_motion_model:
-			try:
-				config_watcher.save_config_with_model(project_path)
-			except Exception as e:
-				print(f"Warning: could not save settings snapshot with model: {e}")
+		# copy existing settings ini file for reference (so you know which settings were used for each model)
+		os.makedirs(project_path, exist_ok=True)
+		# ~ dst = os.path.join(project_path, os.path.basename(config_path))
+		dst = os.path.join(project_path, 'saved_settings.ini')
+		try:
+			shutil.copy2(config_path, dst)
+			print(f"Saved settings snapshot to {dst}")
+		except Exception as e:
+			print(f"Warning: could not copy settings to model dir: {e}")
 
-	return False
+		return True
+
 
 # Train secondary classifiers for each static class
 secondary_static_models = None

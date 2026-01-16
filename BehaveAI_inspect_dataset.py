@@ -126,6 +126,8 @@ try:
 
 	else:
 		hierarchical_mode = False
+		motion_cropped_base_dir = ""
+		static_cropped_base_dir = ""
 
 	primary_classes = primary_static_classes + primary_motion_classes
 	primary_colors = primary_static_colors + primary_motion_colors

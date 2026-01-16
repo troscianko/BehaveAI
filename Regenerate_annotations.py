@@ -1,32 +1,78 @@
 #!/usr/bin/env python3
+"""
+Regenerate motion annotation images for a BehaveAI project.
+
+Usage:
+	python regenerate_motion_dataset.py <path/to/BehaveAI_settings.ini>
+or:
+	python regenerate_motion_dataset.py		# will prompt for INI via file dialog
+
+This script:
+ - reads the settings INI (and resolves relative paths relative to the INI's directory)
+ - rebuilds motion images (annot_motion/images/{train,val}) using the same processing
+   as the annotation tool (sampling a small window of frames, computing diffs, chromatic tail, etc.)
+ - applies masks and blocking boxes in the same way as your annotator
+"""
 import cv2
 import os
 import numpy as np
 import configparser
 import glob
+import sys
+import time
 from collections import deque
 
+# optional GUI prompt if INI not supplied
+try:
+	import tkinter as tk
+	from tkinter import filedialog, messagebox
+	_HAS_TK = True
+except Exception:
+	_HAS_TK = False
+
+# -----------------------
+# Helpers: path resolve / config loader
+# -----------------------
+
+def resolve_project_path(project_dir, value, fallback):
+	"""Resolve a path specified in the INI: absolute or relative to project_dir."""
+	if value is None or str(value).strip() == '':
+		value = fallback
+	value = str(value)
+	if os.path.isabs(value):
+		return os.path.normpath(value)
+	return os.path.normpath(os.path.join(project_dir, value))
+
+
 def load_config(config_path):
-	"""Load and parse the configuration file"""
+	"""
+	Read configuration from config_path and return (params_dict, clips_dir_resolved).
+	params contains numeric / strategy settings used by the image generation pipeline.
+	clips_dir_resolved is an absolute (or normalized) path to the clips directory resolved
+	relative to the INI's project directory.
+	"""
 	config = configparser.ConfigParser()
+	config.optionxform = str  # preserve case
 	config.read(config_path)
-	
+
+	project_dir = os.path.dirname(os.path.abspath(config_path))
+
 	params = {}
 	try:
-		# Read parameters
+		# Read parameters (same names as your previous implementation)
 		params['scale_factor'] = float(config['DEFAULT'].get('scale_factor', '1.0'))
 		params['expA'] = float(config['DEFAULT'].get('expA', '0.5'))
 		params['expB'] = float(config['DEFAULT'].get('expB', '0.8'))
 		params['strategy'] = config['DEFAULT'].get('strategy', 'exponential')
 		params['chromatic_tail_only'] = config['DEFAULT'].get('chromatic_tail_only', 'false').lower()
 		params['lum_weight'] = float(config['DEFAULT'].get('lum_weight', '0.7'))
-		params['rgb_multipliers'] = [float(x) for x in config['DEFAULT']['rgb_multipliers'].split(',')]
+		params['rgb_multipliers'] = [float(x) for x in config['DEFAULT'].get('rgb_multipliers', '2,2,2').split(',')]
 		params['frame_skip'] = int(config['DEFAULT'].get('frame_skip', '0'))
 		params['motion_threshold'] = -1 * int(config['DEFAULT'].get('motion_threshold', '0'))
 		params['motion_blocks_static'] = config['DEFAULT'].get('motion_blocks_static', 'false').lower()
 		params['static_blocks_motion'] = config['DEFAULT'].get('static_blocks_motion', 'false').lower()
 		params['save_empty_frames'] = config['DEFAULT'].get('save_empty_frames', 'false').lower()
-		
+
 		# Compute base frame window size (number of sampled frames)
 		base_window = 4
 		if params['strategy'] == 'exponential':
@@ -40,79 +86,76 @@ def load_config(config_path):
 				base_window = 20
 			if params['expA'] > 0.9 or params['expB'] > 0.9:
 				base_window = 45
-		# store both: base sampled frames and total frames to read
+
 		params['base_frame_window'] = base_window
 		params['frame_window'] = base_window * (params['frame_skip'] + 1)
-		
+
 	except KeyError as e:
 		raise KeyError(f"Missing configuration parameter: {e}")
-	
-	return params
+
+	# Resolve clips_dir relative to project_dir (fallback 'clips')
+	clips_dir_ini = config['DEFAULT'].get('clips_dir', 'clips')
+	clips_dir = resolve_project_path(project_dir, clips_dir_ini, 'clips')
+
+	return params, clips_dir
+
+
+# -----------------------
+# Image processing helpers (unchanged logic besides small improvements)
+# -----------------------
 
 def generate_base_images(video_path, frame_num, params):
 	"""
-	Generate base static and motion images for a specific video frame
-	using the same processing as the annotation tool.
-
-	Interpretation: `frame_num` is the LAST frame of the motion window.
-	We sample `base_N = params['base_frame_window']` frames every `step = frame_skip+1`,
-	so the frames used are:
-	    start_frame, start_frame + step, ..., start_frame + (base_N-1)*step
-	where the last appended frame should equal frame_num (if possible).
+	Generate static and motion images for a specific video frame.
+	frame_num is interpreted as the LAST frame of the motion window to mimic the annotator.
+	Returns (static_img_bgr, motion_img_bgr) or (None, None) on failure.
 	"""
 	cap = cv2.VideoCapture(video_path)
 	if not cap.isOpened():
 		print(f"Error opening video: {video_path}")
 		return None, None
-	
+
 	total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 	if total_frames <= 0:
 		print(f"Video appears empty or unreadable: {video_path}")
 		cap.release()
 		return None, None
 
-	# Parameters for sampling
 	step = params['frame_skip'] + 1
 	base_N = params.get('base_frame_window', 4)
 
-	# Compute intended start frame so that last appended index = frame_num
+	# compute start so last appended index should equal frame_num
 	start_frame = int(frame_num - (base_N - 1) * step)
-	start_frame = max(0, start_frame)  # clamp to 0
+	start_frame = max(0, start_frame)
 	if start_frame > total_frames - 1:
-		# nothing we can do
-		print(f"Start frame {start_frame} is beyond video length ({total_frames}) for {video_path}")
+		print(f"Start frame {start_frame} beyond video length ({total_frames}) for {video_path}")
 		cap.release()
 		return None, None
 
-	# We'll read forward from start_frame and append every 'step' frames until we have base_N frames
 	cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
 	collected = []
 	read_count = 0
 	idx = start_frame
-	while len(collected) < base_N and idx <= total_frames - 1:
+	# safety limit: don't try more than frame_window + some slack
+	max_reads = params['frame_window'] + 10
+
+	while len(collected) < base_N and idx <= total_frames - 1 and read_count <= max_reads:
 		ret, frame = cap.read()
 		if not ret:
 			break
-		# append only every 'step' frames
 		if (read_count % step) == 0:
 			if params['scale_factor'] != 1.0:
 				frame = cv2.resize(frame, None, fx=params['scale_factor'], fy=params['scale_factor'])
 			collected.append(frame.copy())
 		read_count += 1
 		idx += 1
-		# safety to prevent infinite loop
-		if read_count > params['frame_window'] + 10:
-			break
 
-	# If we couldn't collect any frames, fail
 	if not collected:
 		cap.release()
-		print(f"Could not collect frames for target {frame_num} (start {start_frame})")
+		print(f"Could not collect frames for target {frame_num} (start {start_frame}) in {video_path}")
 		return None, None
 
-	# If we collected fewer than base_N frames, we still try to compute motion from what we have.
-	# We'll mimic the annotator's prev_frames/diff update behavior: initialize prev_frames to first gray,
-	# then iterate through the rest updating prev_frames and computing diffs for the final frame.
+	# Process collected frames to produce diffs for the last frame
 	prev_frames = [None] * 3
 	static_img = None
 	diffs = None
@@ -121,21 +164,16 @@ def generate_base_images(video_path, frame_num, params):
 	for i, f in enumerate(collected):
 		if f is None:
 			continue
-		# prepare frame
 		frame_bgr = f
 		gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
 
 		if static_img is None:
-			# initialize
 			static_img = frame_bgr.copy()
 			prev_frames = [gray.copy()] * 3
-			# continue to next frame to allow diffs to get meaningful values
 			continue
 
-		# compute diffs relative to three prev frames
 		current_diffs = [cv2.absdiff(prev_frames[j], gray) for j in range(3)]
 
-		# update prev_frames according to strategy
 		if params['strategy'] == 'exponential':
 			prev_frames[0] = gray
 			prev_frames[1] = cv2.addWeighted(prev_frames[1], params['expA'], gray, 1 - params['expA'], 0)
@@ -145,23 +183,20 @@ def generate_base_images(video_path, frame_num, params):
 			prev_frames[1] = prev_frames[0]
 			prev_frames[0] = gray
 
-		# store the diffs for the most recent processed frame
 		static_img = frame_bgr.copy()
 		diffs = current_diffs
 
-	# we want diffs corresponding to the last frame of the window (i.e. frame_num)
-	# If we don't have diffs (not enough frames), we can't build motion image reliably.
 	if diffs is None or gray is None:
 		cap.release()
 		print(f"Insufficient frames to compute diffs for {frame_num} (collected {len(collected)} frames)")
 		return None, None
 
-	# Build motion image using the same algorithm as annotator
+	# Build motion image (chromatic tail or normal)
 	if params['chromatic_tail_only'] == 'true':
-		tb = cv2.subtract(diffs[0], diffs[1])	
+		tb = cv2.subtract(diffs[0], diffs[1])
 		tr = cv2.subtract(diffs[2], diffs[1])
 		tg = cv2.subtract(diffs[1], diffs[0])
-				
+
 		blue = cv2.addWeighted(gray, params['lum_weight'], tb, params['rgb_multipliers'][2], params['motion_threshold'])
 		green = cv2.addWeighted(gray, params['lum_weight'], tg, params['rgb_multipliers'][1], params['motion_threshold'])
 		red = cv2.addWeighted(gray, params['lum_weight'], tr, params['rgb_multipliers'][0], params['motion_threshold'])
@@ -175,44 +210,48 @@ def generate_base_images(video_path, frame_num, params):
 	cap.release()
 	return static_img, motion_img
 
+
 def read_mask_file(mask_path):
-	"""Read grey box coordinates from mask file"""
 	boxes = []
 	if os.path.exists(mask_path):
 		with open(mask_path, 'r') as f:
 			for line in f:
 				parts = line.strip().split()
 				if len(parts) == 4:
-					boxes.append(tuple(map(int, parts)))
+					try:
+						boxes.append(tuple(map(int, parts)))
+					except Exception:
+						pass
 	return boxes
 
+
 def apply_grey_boxes(image, boxes):
-	"""Apply grey boxes to an image"""
 	result = image.copy()
 	for (x1, y1, x2, y2) in boxes:
 		cv2.rectangle(result, (x1, y1), (x2, y2), (128, 128, 128), -1)
 	return result
+
 
 def apply_blocking_boxes(image, boxes):
-	"""Apply blocking boxes to an image"""
 	result = image.copy()
 	for (x1, y1, x2, y2) in boxes:
 		cv2.rectangle(result, (x1, y1), (x2, y2), (128, 128, 128), -1)
 	return result
 
+
 def get_blocking_boxes(label_path, img_w, img_h):
-	"""Convert normalized label coordinates to absolute coordinates"""
 	boxes = []
 	if os.path.exists(label_path):
 		with open(label_path, 'r') as f:
 			for line in f:
 				parts = line.split()
-				if len(parts) < 5: 
+				if len(parts) < 5:
 					continue
-				# Parse normalized coordinates
-				xc = float(parts[1]); yc = float(parts[2])
-				w = float(parts[3]); h = float(parts[4])
-				# Convert to absolute coordinates
+				try:
+					xc = float(parts[1]); yc = float(parts[2])
+					w = float(parts[3]); h = float(parts[4])
+				except Exception:
+					continue
 				x1 = int((xc - w/2) * img_w)
 				y1 = int((yc - h/2) * img_h)
 				x2 = int((xc + w/2) * img_w)
@@ -220,33 +259,47 @@ def get_blocking_boxes(label_path, img_w, img_h):
 				boxes.append((x1, y1, x2, y2))
 	return boxes
 
+
+# -----------------------
+# Main regeneration function
+# -----------------------
+
 def regenerate_annotations(config_path):
-	"""Main function to regenerate annotation images"""
-	# Load configuration
-	params = load_config(config_path)
-	
-	# Collect all unique base names (video_frame combinations) from motion labels
+	"""Regenerate motion images using parameters & clips_dir from config_path."""
+	params, clips_dir = load_config(config_path)
+
+	# Ensure we operate with project_dir as cwd to keep relative paths consistent
+	project_dir = os.path.dirname(os.path.abspath(config_path))
+	os.chdir(project_dir)
+
+	print(f"Regenerating using INI: {config_path}")
+	print(f"Using clips directory: {clips_dir}")
+
+	# base_dirs currently only needs motion; keep same structure in case you extend
 	base_dirs = [
 		('annot_motion', ['train', 'val'])
 	]
-	
-	# Collect all unique base names (video_frame combinations)
+
+	# collect unique base names from these motion label directories
 	base_names = set()
 	for base_dir, splits in base_dirs:
 		for split in splits:
 			label_dir = os.path.join(base_dir, 'labels', split)
 			if not os.path.exists(label_dir):
 				continue
-			label_files = glob.glob(os.path.join(label_dir, '*.txt'))
-			for label_file in label_files:
+			for label_file in glob.glob(os.path.join(label_dir, '*.txt')):
 				if label_file.endswith('.mask.txt'):
-					continue  # Skip mask files
+					continue
 				base_name = os.path.splitext(os.path.basename(label_file))[0]
 				base_names.add((base_name, split, base_dir))
-	
-	# Process each unique frame
-	for base_name, split, base_dir in base_names:
-		# Extract video name and frame number (frame number stored as LAST frame of window)
+
+	print(f"Found {len(base_names)} annotated motion frames to process.")
+
+	# extensions to search for video files
+	exts = ['.mp4', '.avi', '.mov', '.mkv', '.MP4', '.AVI', '.MOV', '.MKV']
+
+	# process each unique frame
+	for base_name, split, base_dir in sorted(base_names):
 		parts = base_name.split('_')
 		try:
 			frame_num = int(parts[-1])
@@ -254,67 +307,93 @@ def regenerate_annotations(config_path):
 			print(f"Skipping {base_name}: trailing token is not an integer")
 			continue
 		video_name = '_'.join(parts[:-1])
-		
-		# Find video file
+
+		# find video in clips_dir
 		video_path = None
-		clips_dir = 'clips'
-		for ext in ['.mp4', '.avi', '.mov', '.mkv', '.MP4', '.AVI', '.MOV', '.MKV']:
+		for ext in exts:
 			test_path = os.path.join(clips_dir, video_name + ext)
 			if os.path.exists(test_path):
 				video_path = test_path
 				break
-		
+
 		if not video_path:
-			print(f"Video not found: {video_name}")
-			print(f"Expecting video files ending with .mp4, .avi, .mov, or .mkv in /clips/ directory")
+			print(f"Video not found for {base_name}: looking in {clips_dir} for files named {video_name}.*")
 			continue
-		
-		# Generate base images: frame_num is interpreted as the LAST frame of the window
+
 		static_img, motion_img = generate_base_images(video_path, frame_num, params)
 		if static_img is None:
 			print(f"  Could not generate images for {base_name}")
 			continue
-		
-		# Get image dimensions
+
 		img_h, img_w = static_img.shape[:2]
-		
-		# Get mask paths
+
 		static_mask_path = os.path.join('annot_static', 'masks', split, f"{base_name}.mask.txt")
 		motion_mask_path = os.path.join('annot_motion', 'masks', split, f"{base_name}.mask.txt")
-		
-		# Read mask files
+
 		static_mask_boxes = read_mask_file(static_mask_path)
 		motion_mask_boxes = read_mask_file(motion_mask_path)
-		
-		# Get label paths
+
 		static_label_path = os.path.join('annot_static', 'labels', split, f"{base_name}.txt")
 		motion_label_path = os.path.join('annot_motion', 'labels', split, f"{base_name}.txt")
-		
-		# Process motion image
+
+		# Process motion images (save into annot_motion/images/<split>/)
 		if base_dir == 'annot_motion' or params['save_empty_frames'] == 'true':
 			if motion_img is None:
-				print(f"  Could not generate motion image for {base_name}")
+				print(f"  No motion image for {base_name}")
 			else:
 				motion_final = motion_img.copy()
-				
+
 				# Apply grey boxes
 				motion_final = apply_grey_boxes(motion_final, motion_mask_boxes)
-				
+
 				# Apply static blocking if enabled
 				if params['static_blocks_motion'] == 'true':
 					static_boxes = get_blocking_boxes(static_label_path, img_w, img_h)
 					motion_final = apply_blocking_boxes(motion_final, static_boxes)
-				
-				# Save motion image
+
 				motion_img_path = os.path.join('annot_motion', 'images', split, f"{base_name}.jpg")
 				os.makedirs(os.path.dirname(motion_img_path), exist_ok=True)
 				cv2.imwrite(motion_img_path, motion_final)
 				print(f"Regenerated motion: {motion_img_path}")
 
+	print("Regeneration loop complete.")
+
+
+# -----------------------
+# CLI & prompt logic
+# -----------------------
+
+def choose_ini_path_via_dialog():
+	if not _HAS_TK:
+		return None
+	root = tk.Tk()
+	root.withdraw()
+	path = filedialog.askopenfilename(title="Select BehaveAI settings INI", filetypes=[("INI files", "*.ini"), ("All files", "*.*")])
+	root.destroy()
+	return path
+
 if __name__ == "__main__":
-	config_path = 'BehaveAI_settings.ini'
+	# Determine config_path from command-line or prompt
+	if len(sys.argv) > 1:
+		arg = os.path.abspath(sys.argv[1])
+		if os.path.isdir(arg):
+			config_path = os.path.join(arg, "BehaveAI_settings.ini")
+		else:
+			config_path = arg
+	else:
+		config_path = choose_ini_path_via_dialog()
+		if not config_path:
+			# no selection: report and exit
+			print("No settings INI selected — exiting.")
+			sys.exit(0)
+
+	config_path = os.path.abspath(config_path)
 	if not os.path.exists(config_path):
 		print(f"Config file not found: {config_path}")
-	else:
-		regenerate_annotations(config_path)
-	print("Regeneration complete!")
+		sys.exit(1)
+
+	# Run regeneration
+	start_t = time.time()
+	regenerate_annotations(config_path)
+	elapsed = time.time() - start_t
+	print(f"Regeneration complete! Elapsed {elapsed:.1f} s")
