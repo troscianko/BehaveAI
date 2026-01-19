@@ -5,13 +5,11 @@ import tkinter as tk
 from tkinter import filedialog
 from tkinter import messagebox
 import configparser
-# ~ import yaml
 import random
 import time
 from ultralytics import YOLO
 from collections import deque
 import platform
-import config_watcher
 import sys
 
 # ---------- Determine settings INI path and project directory ----------
