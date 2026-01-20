@@ -319,29 +319,6 @@ if primary_motion_classes[0] != '0':
 		motion_model_count += 1
 	
 
-if motion_model_count > 0:
-	# check whether settings have been changed, and motion annotation library needs rebuilding 
-	settings_changed = config_watcher.check_settings_changed(current_config_path=config_path, saved_config_path=None, model_dirs=['model_primary_motion'])	
-
-	if settings_changed:
-		root = tk.Tk()
-		root.withdraw()
-		msg = (
-			"Motion-processing settings have changed since training motion model(s).\n\n"
-			"Do you want to rebuild the annotation dataset now?"
-		)
-		user_wants_regen = messagebox.askyesno("Rebuild annotations?", msg)
-		root.destroy()
-	
-		if user_wants_regen:
-			print("User requested regeneration of annotations...")
-			rc = config_watcher.run_regeneration(regen_script='Regenerate_annotations.py', regen_args=None)
-			if rc == 0:
-				print("Regeneration script completed successfully.")
-			else:
-				print(f"Warning: regeneration script returned code {rc}.")
-
-
 # File dialog for video selection
 # ~ clips_dir = os.path.join(os.getcwd(), "clips")
 initial_dir = clips_dir if os.path.isdir(clips_dir) else os.getcwd()
