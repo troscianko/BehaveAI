@@ -265,7 +265,7 @@ def get_blocking_boxes(label_path, img_w, img_h):
 # -----------------------
 
 def regenerate_annotations(config_path):
-	"""Regenerate motion images using parameters & clips_dir from config_path."""
+	"""Regenerate motion and static images using parameters & clips_dir from config_path."""
 	params, clips_dir = load_config(config_path)
 
 	# Ensure we operate with project_dir as cwd to keep relative paths consistent
@@ -275,12 +275,13 @@ def regenerate_annotations(config_path):
 	print(f"Regenerating using INI: {config_path}")
 	print(f"Using clips directory: {clips_dir}")
 
-	# base_dirs currently only needs motion; keep same structure in case you extend
+	# collect annotated frames from both motion and static label dirs
 	base_dirs = [
-		('annot_motion', ['train', 'val'])
+		('annot_motion', ['train', 'val']),
+		('annot_static', ['train', 'val'])
 	]
 
-	# collect unique base names from these motion label directories
+	# collect unique base names from these directories
 	base_names = set()
 	for base_dir, splits in base_dirs:
 		for split in splits:
@@ -293,7 +294,7 @@ def regenerate_annotations(config_path):
 				base_name = os.path.splitext(os.path.basename(label_file))[0]
 				base_names.add((base_name, split, base_dir))
 
-	print(f"Found {len(base_names)} annotated motion frames to process.")
+	print(f"Found {len(base_names)} annotated frames to process (motion + static).")
 
 	# extensions to search for video files
 	exts = ['.mp4', '.avi', '.mov', '.mkv', '.MP4', '.AVI', '.MOV', '.MKV']
@@ -321,12 +322,15 @@ def regenerate_annotations(config_path):
 			continue
 
 		static_img, motion_img = generate_base_images(video_path, frame_num, params)
-		if static_img is None:
+		if static_img is None and motion_img is None:
 			print(f"  Could not generate images for {base_name}")
 			continue
 
-		img_h, img_w = static_img.shape[:2]
+		# image dims (prefer static_img if available else motion_img)
+		ref_img = static_img if static_img is not None else motion_img
+		img_h, img_w = ref_img.shape[:2]
 
+		# mask & label paths for both static and motion (may or may not exist)
 		static_mask_path = os.path.join('annot_static', 'masks', split, f"{base_name}.mask.txt")
 		motion_mask_path = os.path.join('annot_motion', 'masks', split, f"{base_name}.mask.txt")
 
@@ -336,18 +340,48 @@ def regenerate_annotations(config_path):
 		static_label_path = os.path.join('annot_static', 'labels', split, f"{base_name}.txt")
 		motion_label_path = os.path.join('annot_motion', 'labels', split, f"{base_name}.txt")
 
+		# -----------------------
+		# Process static images (save into annot_static/images/<split>/)
+		# -----------------------
+		# We regenerate static images when:
+		#  - the entry came from annot_static (base_dir == 'annot_static'), OR
+		#  - save_empty_frames == 'true' (keep parity with motion logic)
+		if base_dir == 'annot_static' or params['save_empty_frames'] == 'true':
+			if static_img is None:
+				print(f"  No static image for {base_name}")
+			else:
+				static_final = static_img.copy()
+
+				# Apply grey boxes defined for static
+				static_final = apply_grey_boxes(static_final, static_mask_boxes)
+
+				# If motion_blocks_static enabled, block regions where motion labels exist
+				if params.get('motion_blocks_static', 'false') == 'true':
+					# blocking boxes come from motion labels (if present)
+					static_block_boxes = get_blocking_boxes(motion_label_path, img_w, img_h)
+					static_final = apply_blocking_boxes(static_final, static_block_boxes)
+
+				static_img_path = os.path.join('annot_static', 'images', split, f"{base_name}.jpg")
+				os.makedirs(os.path.dirname(static_img_path), exist_ok=True)
+				cv2.imwrite(static_img_path, static_final)
+				print(f"Regenerated static: {static_img_path}")
+
+		# -----------------------
 		# Process motion images (save into annot_motion/images/<split>/)
+		# -----------------------
+		# Keep original behaviour: regenerate motion when entry came from annot_motion
+		# or when save_empty_frames is enabled.
 		if base_dir == 'annot_motion' or params['save_empty_frames'] == 'true':
 			if motion_img is None:
 				print(f"  No motion image for {base_name}")
 			else:
 				motion_final = motion_img.copy()
 
-				# Apply grey boxes
+				# Apply grey boxes defined for motion
 				motion_final = apply_grey_boxes(motion_final, motion_mask_boxes)
 
-				# Apply static blocking if enabled
-				if params['static_blocks_motion'] == 'true':
+				# Apply static blocking if enabled (static annotations can block motion image)
+				if params.get('static_blocks_motion', 'false') == 'true':
 					static_boxes = get_blocking_boxes(static_label_path, img_w, img_h)
 					motion_final = apply_blocking_boxes(motion_final, static_boxes)
 
@@ -357,6 +391,7 @@ def regenerate_annotations(config_path):
 				print(f"Regenerated motion: {motion_img_path}")
 
 	print("Regeneration loop complete.")
+
 
 
 # -----------------------
