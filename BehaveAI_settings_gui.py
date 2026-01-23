@@ -1,13 +1,8 @@
 #!/usr/bin/env python3
 """
-BehaveAI Settings Editor - Tkinter GUI
+BehaveAI Settings Editor
 
-Run: python3 behaveai_settings_gui.py
-
-This tool edits BehaveAI_settings.ini (default in current directory) and provides
-- Tabs: Model structure, Motion strategy, Model type, Tracking
-- Add/Remove classes for primary/secondary motion/static groups with label, hotkey and colour picker
-- Validation and a Save button (enabled at all times)
+This tool edits BehaveAI_settings.ini using the project dir direcotry passed to it
 """
 import tkinter as tk
 from tkinter import ttk, colorchooser, filedialog, messagebox
@@ -605,7 +600,7 @@ class SettingsEditorApp(tk.Tk):
 		ttk.Spinbox(tab2, from_=0.0, to=1.0, increment=0.01, textvariable=self.lum_weight_var, width=6, command=self._set_dirty).grid(row=4, column=1, sticky='w', padx=8)
 
 		ttk.Label(tab2, text='RGB multipliers (r,g,b)').grid(row=5, column=0, sticky='w', padx=8, pady=(6,0))
-		self.rgb_mult_var = tk.StringVar(value='2,2,2')
+		self.rgb_mult_var = tk.StringVar(value='4,4,4')
 		ttk.Entry(tab2, textvariable=self.rgb_mult_var).grid(row=5, column=1, sticky='w', padx=8)
 		self.rgb_mult_var.trace_add('write', lambda *a: self._set_dirty())
 
@@ -778,7 +773,7 @@ class SettingsEditorApp(tk.Tk):
 		# viewing
 		self.line_thickness_var.set(int(d.get('line_thickness', fallback='1')))
 		self.font_size_var.set(float(d.get('font_size', fallback='0.6')))
-		self.motion_blocks_static_var.set(self._str_to_bool(d.get('motion_blocks_static', fallback='false')))
+		self.motion_blocks_static_var.set(self._str_to_bool(d.get('motion_blocks_static', fallback='true')))
 		self.static_blocks_motion_var.set(self._str_to_bool(d.get('static_blocks_motion', fallback='false')))
 
 		# motion tab
@@ -976,6 +971,13 @@ class SettingsEditorApp(tk.Tk):
 		"""
 		backed = []
 		primary_dir = os.path.join(self.project_dir, 'model_primary_motion')
+		if os.path.isdir(primary_dir):
+			b = self._backup_dir(primary_dir)
+			if b:
+				backed.append(b)
+
+		# also backup the primary static (in case motion blocks static has changed) - secondary static aren't changed
+		primary_dir = os.path.join(self.project_dir, 'model_primary_static')
 		if os.path.isdir(primary_dir):
 			b = self._backup_dir(primary_dir)
 			if b:

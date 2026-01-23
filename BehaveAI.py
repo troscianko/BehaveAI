@@ -8,7 +8,6 @@ BehaveAI Launcher (project-aware)
 	- clips/ input/ output/ models/ yamls/  (created by the launcher)
 - Launches scripts with the project's directory as cwd and passes the project path as argument
 
-Run: python3 behaveai_launcher.py
 """
 import tkinter as tk
 from tkinter import scrolledtext, Button, Frame, ttk, simpledialog, messagebox
@@ -130,7 +129,7 @@ class ScriptRunnerApp:
 		for (label_text, script_name) in btn_names:
 			b = Button(self.button_frame, text=label_text,
 					   command=lambda s=script_name: self.run_script(s),
-					   width=16, state="disabled")
+					   width=14, state="disabled")
 			b.pack(side=tk.LEFT, padx=6)
 			self.buttons[script_name] = b
 
