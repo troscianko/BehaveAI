@@ -31,11 +31,8 @@ See the project wiki [here](https://github.com/troscianko/BehaveAI/wiki) for det
 ## Manuscript:
 [BioRXIV pre-print](https://www.biorxiv.org/content/10.1101/2025.11.04.686536v1)
 
-## Videos:
+## Video Guide (v1.2):
+[<img width="350" alt="Screenshot from 2025-11-04 17-38-49" src="https://github.com/user-attachments/assets/5d76855e-d24f-4107-a6b9-c13aa98e6f79" />](https://www.youtube.com/watch?v=atEL14nxz9s)
 
-Note: these videos show the old user interface. Everything is now fully GUI-based with support for project management. We'll update them ASAP.
-
-[<img width="350" alt="Screenshot from 2025-11-04 17-39-02" src="https://github.com/user-attachments/assets/97a6dd4f-b96f-4bea-80ed-5dae832b0891" />](https://www.youtube.com/watch?v=YQG4497kzPY)
-[<img width="350" alt="Screenshot from 2025-11-04 17-38-49" src="https://github.com/user-attachments/assets/5d76855e-d24f-4107-a6b9-c13aa98e6f79" />](https://www.youtube.com/watch?v=PiX7Fp2F-Xk)
 
 See the [project Wiki](https://github.com/troscianko/BehaveAI/wiki) for detailed instructions.
