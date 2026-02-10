@@ -21,7 +21,7 @@ The framework also supports hierarchical models (e.g. detect something from it's
 - Live (edge) support - record videos, train, then run live video processing using the user interface
 - Built around the versatile [YOLO](https://github.com/ultralytics/ultralytics) (You Only Look Once) architecture
 - Computationally efficient - runs fine on low-end devices without GPUs
-- Intuitive user interface with installers for Windows and Linux (including Raspberry Pi) and full user-interface
+- Intuitive user interface with installers for Windows and Linux (including Raspberry Pi) and full user-interface. Also works on MacOS but currently no installer.
 - Free & open source ([GNU Afferro General Public License](https://github.com/troscianko/BehaveAI/blob/main/LICENSE))
 
 ## User guide & installation instructions
