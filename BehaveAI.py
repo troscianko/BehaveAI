@@ -104,7 +104,7 @@ class ScriptRunnerApp:
 		self.project_combo.bind("<<ComboboxSelected>>", lambda e: self.select_project(self.project_var.get()))
 
 		# New Project button
-		Button(self.project_frame, text="New project", command=self.create_new_project, width=8).pack(side="left", padx=(0,6))
+		Button(self.project_frame, text="New project", command=self.create_new_project, width=10).pack(side="left", padx=(0,6))
 
 		# Refresh projects button
 		Button(self.project_frame, text="Refresh", command=self.refresh_projects, width=6).pack(side="left", padx=(0,6))
@@ -129,7 +129,7 @@ class ScriptRunnerApp:
 		for (label_text, script_name) in btn_names:
 			b = Button(self.button_frame, text=label_text,
 					   command=lambda s=script_name: self.run_script(s),
-					   width=14, state="disabled")
+					   width=18, state="disabled")
 			b.pack(side=tk.LEFT, padx=6)
 			self.buttons[script_name] = b
 

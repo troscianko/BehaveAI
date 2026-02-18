@@ -1,21 +1,30 @@
-import cv2
+#!/usr/bin/env python3
+
+
 import os
+import sys
+import time
+import cv2
 import numpy as np
-import tkinter as tk
-from tkinter import filedialog
-from tkinter import messagebox
 import configparser
 import random
-import time
-from ultralytics import YOLO
 from collections import deque
-import platform
-import sys
 
-# ---------- Determine settings INI path and project directory ----------
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
+from PIL import Image, ImageTk
+from index_annotations import AnnotationIndex
+
+
+# Try to import YOLO
+try:
+	from ultralytics import YOLO
+except Exception:
+	YOLO = None
+
+#--- Configuration parsing ----------
 def choose_ini_path_from_dialog():
-	root = tk.Tk()
-	root.withdraw()
+	root = tk.Tk(); root.withdraw()
 	ini_path = filedialog.askopenfilename(
 		title="Select BehaveAI settings INI",
 		filetypes=[("INI files", "*.ini"), ("All files", "*.*")]
@@ -23,8 +32,6 @@ def choose_ini_path_from_dialog():
 	root.destroy()
 	return ini_path
 
-# If a command-line argument is provided, interpret as project dir or INI path.
-# Otherwise prompt the user with a file picker.
 if len(sys.argv) > 1:
 	arg = os.path.abspath(sys.argv[1])
 	if os.path.isdir(arg):
@@ -34,46 +41,37 @@ if len(sys.argv) > 1:
 else:
 	config_path = choose_ini_path_from_dialog()
 	if not config_path:
-		# user cancelled
 		tk.messagebox.showinfo("No settings file", "No settings INI selected — exiting.")
 		sys.exit(0)
 
 config_path = os.path.abspath(config_path)
-
 if not os.path.exists(config_path):
-	# show a GUI error then exit
 	try:
 		root = tk.Tk(); root.withdraw()
 		messagebox.showerror("Missing settings", f"Configuration file not found: {config_path}")
 		root.destroy()
 	except Exception:
-		# fallback to console message if GUI isn't available
 		print(f"Configuration file not found: {config_path}")
 	sys.exit(1)
 
-# Make the project directory the working directory so all relative paths resolve there.
 project_dir = os.path.dirname(config_path)
 os.chdir(project_dir)
-print(f"Using project directory: {project_dir}")
-print(f"Using config file: {config_path}")
-
-# Load configuration
 config = configparser.ConfigParser()
-config.optionxform = str  # preserve case if needed
+config.optionxform = str
 config.read(config_path)
 
-# Helper: resolve a path from INI (absolute or relative to project_dir)
 def resolve_project_path(value, fallback):
-    if value is None or str(value).strip() == '':
-        value = fallback
-    value = str(value)
-    if os.path.isabs(value):
-        return os.path.normpath(value)
-    return os.path.normpath(os.path.join(project_dir, value))
+	if value is None or str(value).strip() == '':
+		value = fallback
+	value = str(value)
+	if os.path.isabs(value):
+		return os.path.normpath(value)
+	return os.path.normpath(os.path.join(project_dir, value))
 
-# Read dataset / directory keys from INI (defaults are relative names inside the project)
 clips_dir_ini = config['DEFAULT'].get('clips_dir', 'clips')
 clips_dir = resolve_project_path(clips_dir_ini, 'clips')
+
+
 
 
 # Read parameters
@@ -110,10 +108,12 @@ try:
 	ignore_secondary = [name.strip() for name in config['DEFAULT']['ignore_secondary'].split(',')]
 	dominant_source = config['DEFAULT']['dominant_source'].lower()
 
+
+	motion_cropped_base_dir = 'annot_motion_crop'
+	static_cropped_base_dir = 'annot_static_crop'
+	
 	if len(secondary_motion_classes) >= 2 or len(secondary_static_classes) >= 2:
 		hierarchical_mode = True
-		motion_cropped_base_dir = 'annot_motion_crop'
-		static_cropped_base_dir = 'annot_static_crop'
 		
 		# secondary classes need more than one value, so clear if there's only one value
 		if len(secondary_motion_classes) == 1:
@@ -192,46 +192,146 @@ try:
 except KeyError as e:
 	raise KeyError(f"Missing configuration parameter: {e}")
 
-# Validate configuration
 
-if len(primary_motion_classes) > len(primary_motion_colors) or len(primary_motion_classes) != len(primary_motion_hotkeys):
-	raise ValueError("Primary motion classes, colours and hotkeys must match in configuration. Ensure colours are seprated by semicolons")
-if len(secondary_motion_classes) > len(secondary_motion_colors) or len(secondary_motion_classes) != len(secondary_motion_hotkeys):
-	raise ValueError("Secondary motion classes, colours and hotkeys must match in configuration. Ensure colours are seprated by semicolons")
-if len(primary_static_classes) > len(primary_static_colors) or len(primary_static_classes) != len(primary_static_hotkeys):
-	raise ValueError("Primary static classes, colours and hotkeys must match in configuration. Ensure colours are seprated by semicolons")
-if len(secondary_static_classes) > len(secondary_static_colors) or len(secondary_static_classes) != len(secondary_static_hotkeys):
-	raise ValueError("Secondary static classes, colours and hotkeys must match in configuration. Ensure colours are seprated by semicolons")
-if motion_blocks_static != 'true' and motion_blocks_static != 'false':
-	raise ValueError("motion_blocks_static must be true or false")
-if static_blocks_motion != 'true' and static_blocks_motion != 'false':
-	raise ValueError("static_blocks_motion must be true or false")
-if save_empty_frames != 'true' and save_empty_frames != 'false':
-	raise ValueError("save_empty_frames must be true or false")
-	
 
-expA2 = 1 - expA
-expB2 = 1 - expB
+if motion_blocks_static not in ('true', 'false'):
+	raise ValueError("motion_blocks_static must be 'true' or 'false'")
+if static_blocks_motion not in ('true', 'false'):
+	raise ValueError("static_blocks_motion must be 'true' or 'false'")
+if save_empty_frames not in ('true', 'false'):
+	raise ValueError("save_empty_frames must be 'true' or 'false'")
 
-# Setup classes based on mode
 primary_classes_info = list(zip(primary_hotkeys, primary_classes))
 secondary_classes_info = list(zip(secondary_hotkeys, secondary_classes))
 primary_class_dict = {ord(key): idx for idx, (key, _) in enumerate(primary_classes_info)}
 secondary_class_dict = {ord(key): idx for idx, (key, _) in enumerate(secondary_classes_info)}
+
+# initial selections
 active_primary = 0
 if len(primary_static_classes) <= 1:
 	active_primary = 1
 active_secondary = 0
 
 
+annotation_index = AnnotationIndex(
+	static_train_images_dir,
+	static_val_images_dir,
+	static_train_labels_dir,
+	static_val_labels_dir,
+	motion_train_images_dir,
+	motion_val_images_dir,
+	motion_train_labels_dir,
+	motion_val_labels_dir,
+	motion_cropped_base_dir,
+	static_cropped_base_dir,
+	clips_dir,
+	primary_static_classes,
+	primary_classes,
+	secondary_classes,
+	hierarchical_mode,
+	ignore_secondary=ignore_secondary
+)
 
-#-------Check whether models exist-------------
+items = annotation_index.list_images_labels_and_masks()
 
-motion_model_count = 0
+# Build quick lookup: video_label -> set(of frame numbers that have annotations)
+def build_annot_index_map(items_list):
+	m = {}
+	for it in items_list:
+		base = it.get('basename', '')
+		if '_' not in base:
+			continue
+		vlabel, tail = base.rsplit('_', 1)
+		try:
+			frm = int(tail)
+		except Exception:
+			continue
+		m.setdefault(vlabel, set()).add(frm)
+	return m
 
-# Train secondary classifiers for each static class
-secondary_static_models = None
-secondary_motion_models = None
+# initial annotated frames map (used to draw ticks on seek)
+annotated_frames_map = build_annot_index_map(items)
+
+
+
+
+# Open video
+root_tmp = tk.Tk(); root_tmp.withdraw()
+initial_dir = clips_dir if os.path.isdir(clips_dir) else os.getcwd()
+video_path = filedialog.askopenfilename(title="Select video file", initialdir=initial_dir)
+root_tmp.destroy()
+if not video_path:
+	print("No video selected. Exiting.")
+	sys.exit(0)
+
+
+
+
+capture = cv2.VideoCapture(video_path)
+total_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+video_width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+video_height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+# frameWindow logic
+right_frame_width = max(96, int(video_height / 3))
+frameWindow = 4
+if strategy == 'exponential':
+	if expA > 0.2 or expB > 0.2:
+		frameWindow = 5
+	if expA > 0.5 or expB > 0.5:
+		frameWindow = 10
+	if expA > 0.7 or expB > 0.7:
+		frameWindow = 15
+	if expA > 0.8 or expB > 0.8:
+		frameWindow = 20
+	if expA > 0.9 or expB > 0.9:
+		frameWindow = 45
+
+raw_buf = deque(maxlen=frameWindow)
+frameWindow = frameWindow * (frame_skip + 1)
+frame_number = min(max(frameWindow - 1, 0), total_frames - 1)
+frame_updated = True
+
+# state
+boxes = []
+grey_boxes = []
+original_frame = None
+fr = None
+motion_image = None
+
+video_label = os.path.splitext(os.path.basename(video_path))[0]
+
+bottom_bar_height = int(20 + font_size * 20)
+grey_mode = False
+annot_count = 1
+auto_ann_switch = 1
+show_mode = 1  # 1 = motion false color, -1 = static RGB
+zoom_hide = 0
+disp_scale_factor = 1.0
+
+last_mouse_move = 0.0
+ANIM_STILL_THRESHOLD = 0.5
+ANIM_FPS = 8
+last_anim_draw = 0.0
+ANIM_DT = 1.0 / ANIM_FPS
+
+# Load models
+model_static = None
+model_motion = None
+if YOLO is not None:
+	if os.path.exists(primary_static_model_path):
+		try:
+			model_static = YOLO(primary_static_model_path)
+		except Exception as e:
+			print("Failed to load primary static model:", e)
+	if os.path.exists(primary_motion_model_path):
+		try:
+			model_motion = YOLO(primary_motion_model_path)
+		except Exception as e:
+			print("Failed to load primary motion model:", e)
+
+secondary_static_models = {}
+secondary_motion_models = {}
 
 if hierarchical_mode:
 	secondary_static_models = {}
@@ -296,584 +396,270 @@ if hierarchical_mode:
 				print(f'Secondary motion model for "{primary_class}" found')
 				# Load the trained model
 				secondary_motion_models[primary_class] = YOLO(weights_path)
-				motion_model_count += 1
+				# ~ motion_model_count += 1
 				
 		# ~ print(f"secondary_motion_models {secondary_motion_models}")
 
-#-------CHECK PRIMARY MODEL EXISTS----------
-if primary_static_classes[0] != '0':
-	if not os.path.exists(primary_static_model_path):
-		print('Primary static model not found')
-		model_static = None
-	else:
-		print('Primary static model found')
-		model_static = YOLO(primary_static_model_path)
 
-if primary_motion_classes[0] != '0':
-	if not os.path.exists(primary_motion_model_path):
-		print('Primary motion model not found')
-		model_motion = None
-	else:
-		print('Primary motion model found')
-		model_motion = YOLO(primary_motion_model_path)
-		motion_model_count += 1
+# Helper: convert BGR -> PhotoImage
+
+def cv2_to_photoimage(bgr_img):
+	rgb = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2RGB)
+	pil = Image.fromarray(rgb)
+	return ImageTk.PhotoImage(pil)
+
+## remove overlapping detections	
+def non_max_suppression(box_list):
+	"""Remove overlapping detections keeping highest confidence box."""
+	if len(box_list) == 0:
+		return []
 	
+	# Calculate overall confidence for each box
+	confidences = []
+	for box in box_list:
+		if hierarchical_mode:
+			conf = box[6]
+		else:
+			conf = box[5]
 
-# File dialog for video selection
-# ~ clips_dir = os.path.join(os.getcwd(), "clips")
-initial_dir = clips_dir if os.path.isdir(clips_dir) else os.getcwd()
-
-root = tk.Tk()
-root.withdraw()
-video_path = filedialog.askopenfilename(title="Select video file", initialdir=initial_dir)
-root.destroy()
-if not video_path:
-	print("No video selected. Exiting.")
-	exit()
-
-
-# ~ # Create directories
-# ~ for d in [motion_train_images_dir, motion_val_images_dir, motion_train_labels_dir, motion_val_labels_dir]:
-	# ~ os.makedirs(d, exist_ok=True)
-
-# ~ for d in [static_train_images_dir, static_val_images_dir, static_train_labels_dir, static_val_labels_dir]:
-	# ~ os.makedirs(d, exist_ok=True)
-
-# ~ # Write YAML config
-
-# ~ # Static dataset YAML
-# ~ static_yaml_output = 'static_annotations.yaml'
-# ~ static_yaml_dict = {
-	# ~ 'train': os.path.abspath(static_train_images_dir),
-	# ~ 'val': os.path.abspath(static_val_images_dir),
-	# ~ 'nc': len(primary_static_classes),
-	# ~ 'names': primary_static_classes
-# ~ }
-# ~ with open(static_yaml_output, 'w') as yf:
-	# ~ yaml.dump(static_yaml_dict, yf)
-# ~ print(f"Written static YOLO dataset config to {static_yaml_output}")
-
-# ~ # Motion dataset YAML
-# ~ motion_yaml_output = 'motion_annotations.yaml'
-# ~ motion_yaml_dict = {
-	# ~ 'train': os.path.abspath(motion_train_images_dir),
-	# ~ 'val': os.path.abspath(motion_val_images_dir),
-	# ~ 'nc': len(primary_motion_classes),
-	# ~ 'names': primary_motion_classes
-# ~ }
-# ~ with open(motion_yaml_output, 'w') as yf:
-	# ~ yaml.dump(motion_yaml_dict, yf)
-# ~ print(f"Written motion YOLO dataset config to {motion_yaml_output}")
-
-capture = cv2.VideoCapture(video_path)
-total_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
-video_width  = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
-video_height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
-right_frame_width = int(video_height/3)
-# ~ right_frame_width = 120
-
-
-
-# the frame window needs to be larger the further back in time smoothing covers
-frameWindow = 4 # suitable for sequential
-if strategy == 'exponential':
-	if expA > 0.2 or expB > 0.2:
-		frameWindow = 5
-	if expA > 0.5 or expB > 0.5:
-		frameWindow = 10
-	if expA > 0.7 or expB > 0.7:
-		frameWindow = 15
-	if expA > 0.8 or expB > 0.8:
-		frameWindow = 20
-	if expA > 0.9 or expB > 0.9:
-		frameWindow = 45
-	# beyond this the numbers get very large - 0.95 would be ~90
+		confidences.append(conf)
 	
-	raw_buf = deque(maxlen=frameWindow) # length of animation preview
-else:
-	raw_buf = deque(maxlen=4) # in sequential mode restrict to 4 frames
+	# Sort by confidence (descending)
+	sorted_indices = sorted(range(len(box_list)), key=lambda i: confidences[i], reverse=True)
+	suppressed = [False] * len(box_list)
+	keep = []
 	
-
-# ~ print(f"expA {expA}, expB {expB} frameWindow {frameWindow}")
-
-frameWindow = frameWindow * (frame_skip +1)
-
-# initial last-frame to display = earliest valid last-frame (frameWindow-1), clamped to [0, total_frames-1]
-frame_number = min(max(frameWindow - 1, 0), total_frames - 1)
-frame_updated = True
-
-# State variables
-drawing = False
-cursor_pos = (0, 0)
-ix = iy = -1
-boxes = []  # For all boxes: (x1, y1, x2, y2, class_idx) or (x1, y1, x2, y2, static_cls, motion_cls)
-grey_boxes = []
-original_frame = None
-video_label = os.path.splitext(os.path.basename(video_path))[0]
-button_height = int(font_size * 40)
-# ~ bottom_bar_height = button_height 
-ts  = cv2.getTextSize("XyZ", cv2.FONT_HERSHEY_SIMPLEX, font_size, line_thickness)[0]
-bottom_bar_height = int(ts[1]) + 6 * line_thickness
-grey_mode = False
-annot_count = 1
-auto_ann_switch = 1
-show_mode = 1
-zoom_hide = 0
-disp_scale_factor = 1.0
-
-
-last_mouse_move = 0.0 # timestamp of last mouse move
-ANIM_STILL_THRESHOLD = 0.5   # seconds to wait before animating
-ANIM_FPS = 8				 # frames per second for the mini‐animation
-last_anim_draw = 0.0
-ANIM_DT = 1.0 / ANIM_FPS
-
-
-# zoom box variables
-zoom_factor = 2
-zoom_prop = 0.1 # proporiton of screen width that the zoomed boxes should be - shouldn't be >~0.3
-zoom_size = 250  # Size of the zoomed region in pixels (before zoom)
-cursor_pos = (0, 0)
-
-
-print("Annotating video: " + video_label)
-print(f"Mode: {'Hierarchical' if hierarchical_mode else 'Standard'}")
-
-# Window title
-elements = ["BehaveAI Video:", video_label, "ESC=quit BACKSPACE=clear u=undo ENTER=save SPACE=flip mode LEFT/RIGHT </> seek",]
-
-video_name = ' '.join(elements)
-
-cv2.namedWindow(video_name, cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_NORMAL | cv2.WINDOW_KEEPRATIO)
-
-
-# UI functions
-def draw_buttons(frame):
-	total_width = frame.shape[1]
-	# ~ h = frame.shape[0]
-	h = int(video_height * disp_scale_factor)
-	y_start = h + bottom_bar_height + line_thickness # Start from bottom
-	scaled_h = frame.shape[0]
-	scaled_bottom_bar_height = scaled_h - y_start
-	ty = int(y_start + (scaled_bottom_bar_height - bottom_bar_height) / 2) + (line_thickness * 4)
-	
-	# Calculate button widths
-	ignore_first = 0
-	if hierarchical_mode:
-		total_buttons = len(primary_classes) + len(secondary_classes) + 1
-		button_width = total_width // total_buttons
-		secondary_offset = len(primary_classes) * button_width
-	else:
-		total_buttons = len(primary_classes) + 1
-		button_width = total_width // total_buttons
-		secondary_offset = 0
-	
-	# Draw primary classes
-	if len(primary_classes) > 1:
-		for idx in range(len(primary_classes)):
-			if primary_classes[idx] != '0':
-				is_active = (idx == active_primary)
+	for i in range(len(sorted_indices)):
+		idx_i = sorted_indices[i]
+		if suppressed[idx_i]:
+			continue
+			
+		keep.append(box_list[idx_i])
+		box_i = box_list[idx_i]
+		coords_i = (box_i[0], box_i[1], box_i[2], box_i[3])
+		
+		for j in range(i + 1, len(sorted_indices)):
+			idx_j = sorted_indices[j]
+			if suppressed[idx_j]:
+				continue
 				
-				if hierarchical_mode:
-					text = f"{primary_classes[idx].upper()} ({primary_classes_info[idx][0]})"
-				else:
-					text = f"{primary_classes[idx]} ({primary_classes_info[idx][0]})"
-				color = primary_colors[idx] if is_active else (128, 128, 128)
-				x1, y1 = idx * button_width, h
-				x2, y2 = x1 + button_width, scaled_h
-
-				cv2.rectangle(frame, (x1, y1), (x2, y2), color, -line_thickness)
-				border_color = (255, 255, 255) if is_active else (0, 0, 0)
-				cv2.rectangle(frame, (x1, y1), (x2, y2), border_color, 2 if is_active else 1)
-				ts = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_size, line_thickness)[0]
-				tx = x1 + (button_width - ts[0]) // 2
-				# ~ ty = h + (bottom_bar_height * disp_scale_factor + ts[1]) // 2
-				cv2.putText(frame, text, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, font_size, (0, 0, 0), line_thickness, cv2.LINE_AA)
-
-	# Draw secondary classes
-	if hierarchical_mode:
-		for idx in range(len(secondary_classes)):
-			is_active = (idx == active_secondary)
+			box_j = box_list[idx_j]
+			coords_j = (box_j[0], box_j[1], box_j[2], box_j[3])
 			
-			text = f"{secondary_classes[idx]} ({secondary_classes_info[idx][0]})"
-			color = secondary_colors[idx] if is_active else (128, 128, 128)
-			x1, y1 = secondary_offset + idx * button_width, h
-			x2, y2 = x1 + button_width, scaled_h
-			
-			cv2.rectangle(frame, (x1, y1), (x2, y2), color, -line_thickness)
-			border_color = (255, 255, 255) if is_active else (0, 0, 0)
-			cv2.rectangle(frame, (x1, y1), (x2, y2), border_color, 2 if is_active else 1)
-			ts = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_size, line_thickness)[0]
-			tx = x1 + (button_width - ts[0]) // 2
-			# ~ ty = h + (bottom_bar_height * disp_scale_factor + ts[1]) // 2
-			cv2.putText(frame, text, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, font_size, (0, 0, 0), line_thickness, cv2.LINE_AA)
+			if iou(coords_i, coords_j) > iou_thresh:
+				suppressed[idx_j] = True
+				
+	return keep
+
+
+
+def iou(box1, box2):
+	xa = max(box1[0], box2[0]); ya = max(box1[1], box2[1])
+	xb = min(box1[2], box2[2]); yb = min(box1[3], box2[3])
+	inter = max(0, xb-xa) * max(0, yb-ya)
+	area1 = (box1[2]-box1[0])*(box1[3]-box1[1])
+	area2 = (box2[2]-box2[0])*(box2[3]-box2[1])
+	prop1 = inter/area1
+	prop2 = inter/area2
+	if prop1 > prop2:
+		return prop1 if prop1 > 0 else 0
+	else:
+		return prop2 if prop2 > 0 else 0
+
+
+
+# ------------------------------
+# Load saved labels for a given base (video_label_frame)
+# ------------------------------
+def norm_to_pixels(xc, yc, bw, bh, w, h):
+	cx = float(xc) * w
+	cy = float(yc) * h
+	bw_p = float(bw) * w
+	bh_p = float(bh) * h
+	x1 = int(cx - bw_p/2); y1 = int(cy - bh_p/2)
+	x2 = int(cx + bw_p/2); y2 = int(cy + bh_p/2)
+	x1 = max(0, min(w-1, x1)); y1 = max(0, min(h-1, y1)); x2 = max(0, min(w-1, x2)); y2 = max(0, min(h-1, y2))
+	return x1, y1, x2, y2
+
+
+# Auto-annotate: uses model_static / model_motion and per-primary secondary models
+def auto_annotate_local():
+	# Collect all primary detections
+	# ~ all_detections = []
+	global boxes
 	
-	# Draw grey button
-	text = "Grey (g)"
-	color = (128, 128, 128)
-	x1, y1 = total_width - button_width, h
-	x2, y2 = total_width, scaled_h
-	is_active = grey_mode
-	cv2.rectangle(frame, (x1, y1), (x2, y2), color, -line_thickness)
-	border_color = (255, 255, 255) if is_active else (0, 0, 0)
-	cv2.rectangle(frame, (x1, y1), (x2, y2), border_color, 2 if is_active else 1)
-	ts = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_size, line_thickness)[0]
-	tx = x1 + (button_width - ts[0]) // 2
-	# ~ ty = y_start + int((bottom_bar_height * disp_scale_factor + ts[1]) // 2)
-	cv2.putText(frame, text, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, font_size, (0, 0, 0), line_thickness, cv2.LINE_AA)
+	# Primary static detection
+	if primary_static_classes[0] != '0' and model_static != None:
+		results_static = model_static.predict(fr, conf=primary_conf_thresh, verbose=False)
+		for box in results_static[0].boxes:
+			# ~ coords = tuple(map(int, box.xyxy[0].tolist()))
+			class_idx = int(box.cls[0])
+			primary_class = primary_static_classes[class_idx]
+			conf = float(box.conf[0])
+			x1, y1, x2, y2 = map(int, box.xyxy[0])
 
-def draw_boxes(frame):
-	# Draw all boxes
+			if hierarchical_mode:
+				# crop and run secondary classifier on static image
+				if len(secondary_static_classes) >= 2:
+					sec_model = secondary_static_models.get(primary_class, None)
+					sec_classes = secondary_static_classes
+					crop_img = fr
+				# Fallback to motion secondary model if static not available
+				elif len(secondary_motion_classes) >= 2:
+					sec_model = secondary_motion_models.get(primary_class, None)
+					sec_classes = secondary_motion_classes
+					crop_img = motion_image if primary_motion_classes[0] != '0' else fr
+
+				# Get the cropped region
+				crop = None
+				if crop_img is not None:
+					crop = crop_img[y1:y2, x1:x2]
+				
+				secondary_class = primary_class
+				secondary_conf = 1.0
+				secondary_class_idx = -1
+
+				# Run secondary classification if we have a model and valid crop
+				if sec_model and crop is not None and crop.size > 0:
+					sec_results = sec_model.predict(crop, verbose=False)
+					if sec_results[0].probs is not None:
+						secondary_class_idx = sec_results[0].probs.top1
+						secondary_conf = sec_results[0].probs.top1conf.item()
+						secondary_class = sec_model.names[secondary_class_idx]
+
+				boxes.append((x1, y1, x2, y2, class_idx, secondary_class_idx, conf, secondary_conf))#conf 1 & 2 need separating
+				
+
+			else:
+				boxes.append((x1, y1, x2, y2, class_idx, conf))
+
+
+	# Primary motion detection
+	if primary_motion_classes[0] != '0' and model_motion != None:
+		results_motion = model_motion.predict(motion_image, conf=primary_conf_thresh, verbose=False)
+		for box in results_motion[0].boxes:
+			class_idx = int(box.cls[0])
+			primary_class = primary_motion_classes[class_idx]
+			conf = float(box.conf[0])
+			x1, y1, x2, y2 = map(int, box.xyxy[0])
+
+			if hierarchical_mode:
+				# crop and run secondary classifier on static image
+				if len(secondary_static_classes) >= 2:
+					sec_model = secondary_static_models.get(primary_class, None)
+					sec_classes = secondary_static_classes
+					crop_img = fr
+				# Fallback to motion secondary model if static not available
+				elif len(secondary_motion_classes) >= 2:
+					sec_model = secondary_motion_models.get(primary_class, None)
+					sec_classes = secondary_motion_classes
+					crop_img = motion_image if primary_motion_classes[0] != '0' else fr
+
+				# Get the cropped region
+				crop = None
+				if crop_img is not None:
+					crop = crop_img[y1:y2, x1:x2]
+				
+				secondary_class = primary_class
+				secondary_conf = 1.0
+				secondary_class_idx = -1
+
+				# Run secondary classification if we have a model and valid crop
+				if sec_model and crop is not None and crop.size > 0:
+					sec_results = sec_model.predict(crop, verbose=False)
+					if sec_results[0].probs is not None:
+						secondary_class_idx = sec_results[0].probs.top1
+						secondary_conf = sec_results[0].probs.top1conf.item()
+						secondary_class = sec_model.names[secondary_class_idx]
+
+				boxes.append((x1, y1, x2, y2, class_idx + len(primary_static_classes), secondary_class_idx, conf, secondary_conf))#conf 1 & 2 need separating
+				
+			else:
+				boxes.append((x1, y1, x2, y2, class_idx + len(primary_static_classes), conf))
+
+	if boxes:
+		boxes = non_max_suppression(boxes)
+
+
+
+# draw boxes onto a frame copy
+def draw_boxes_on_image(base_img):
+	"""
+	Draw hierarchical boxes onto a *copy* of base_img.
+	- Outer rectangle uses primary color (slightly thicker)
+	- Inner rectangle uses secondary color (if present)
+	- Label shows PRIMARY conf SECONDARY conf (primary uppercased)
+	"""
+	out = base_img.copy()
 	for box in boxes:
 
-			
+
 		if hierarchical_mode:
-			x1, y1, x2, y2, primary_cls, secondary_cls, conf, secondary_conf = box
-			x1 = int(x1 * disp_scale_factor)
-			y1 = int(y1 * disp_scale_factor)
-			x2 = int(x2 * disp_scale_factor)
-			y2 = int(y2 * disp_scale_factor)
-			if primary_classes[primary_cls] in ignore_secondary:
-				label = f"{primary_classes[primary_cls].upper()}"
-				if conf != -1: # add confidence if auto-annotated
-					label = label + f' {conf:.2f}'
-				label_size, _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_size, line_thickness)
-				label_w, label_h = label_size
-				cv2.rectangle(frame, (x1-line_thickness, y1 - label_h - line_thickness*4), (x1 + label_w + line_thickness*2, y1), (0, 0, 0), -1)
-				cv2.rectangle(frame, (x1, y1), (x2, y2), primary_colors[primary_cls], line_thickness)
-				cv2.putText(frame, label, (x1, y1 - line_thickness*3), cv2.FONT_HERSHEY_SIMPLEX, 
-							font_size, primary_colors[primary_cls], line_thickness, cv2.LINE_AA)
+			x1, y1, x2, y2, primary_cls, secondary_cls, conf, sec_conf = box
+			# primary colour (BGR tuple) if available
+			pcol = primary_colors[primary_cls] if (primary_cls is not None and primary_cls < len(primary_colors)) else (255,255,255)
+			# if secondary present choose its colour, otherwise use primary for inner too
+			scol = None
+			if secondary_cls is not None and secondary_cls != -1 and secondary_cls < len(secondary_colors):
+				scol = secondary_colors[secondary_cls]
 			else:
-				# Draw outer static box (slightly larger)
-				outer_thickness = line_thickness + 2
-				cv2.rectangle(frame, (x1-outer_thickness, y1-outer_thickness), 
-							 (x2+outer_thickness, y2+outer_thickness), 
-							 primary_colors[primary_cls], outer_thickness)
-				label = f"{primary_classes[primary_cls].upper()}"
-				if conf != -1: # add confidence if auto-annotated
-					label = label + f' {conf:.2f}'
-				label = label + f" {secondary_classes[secondary_cls]}"
-				if secondary_conf != -1: # add confidence if auto-annotated
-					label = label + f' {secondary_conf:.2f}'	
-				label_size, _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_size, line_thickness)
-				label_w, label_h = label_size
-				cv2.rectangle(frame, (x1-line_thickness, y1 - label_h - line_thickness*4), (x1 + label_w + line_thickness*2, y1), (0, 0, 0), -1)
-				cv2.rectangle(frame, (x1, y1), (x2, y2), secondary_colors[secondary_cls], line_thickness)
-				cv2.putText(frame, label, (x1, y1 - line_thickness*3), cv2.FONT_HERSHEY_SIMPLEX, 
-							font_size, secondary_colors[secondary_cls], line_thickness, cv2.LINE_AA)
+				scol = pcol
+
+			# draw outer box (primary) slightly thicker
+			outer_th = max(1, line_thickness + 2)
+			cv2.rectangle(out, (int(x1)-outer_th, int(y1)-outer_th), (int(x2)+outer_th, int(y2)+outer_th), pcol, outer_th)
+
+			# draw inner box (secondary or primary)
+			if primary_classes[primary_cls] not in ignore_secondary:
+				cv2.rectangle(out, (int(x1), int(y1)), (int(x2), int(y2)), scol, line_thickness)
+
+			# compose label: PRIMARY (upper) [+ conf], then secondary [+ conf]
+			label = f"{primary_classes[primary_cls].upper()}"
+			if conf != -1 and conf is not None:
+				try:
+					label = label + f" {conf:.2f}"
+				except Exception:
+					pass
+			
+			if primary_classes[primary_cls] not in ignore_secondary:	
+				if secondary_cls is not None and secondary_cls != -1 and secondary_cls < len(secondary_classes):
+					label2 = f"{secondary_classes[secondary_cls]}"
+					if sec_conf != -1 and sec_conf is not None:
+						try:
+							label2 = label2 + f" {sec_conf:.2f}"
+						except Exception:
+							pass
+					label = label + " " + label2
+
+			# draw label background and text
+			label_size, _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_size, line_thickness)
+			label_w, label_h = label_size
+			lx, ly = int(x1), int(y1)
+			cv2.rectangle(out, (lx - line_thickness, ly - label_h - line_thickness*4), (lx + label_w + line_thickness*2, ly), (0,0,0), -1)
+			# ~ cv2.putText(out, label, (lx, ly - line_thickness*2), cv2.FONT_HERSHEY_SIMPLEX, font_size, scol, line_thickness, cv2.LINE_AA)
+			cv2.putText(out, label, (lx, ly - line_thickness*2), cv2.FONT_HERSHEY_SIMPLEX, font_size, pcol, line_thickness, cv2.LINE_AA)
+
 		else:
 			x1, y1, x2, y2, primary_cls, conf = box
-			x1 = int(x1 * disp_scale_factor)
-			y1 = int(y1 * disp_scale_factor)
-			x2 = int(x2 * disp_scale_factor)
-			y2 = int(y2 * disp_scale_factor)
+			pcol = primary_colors[primary_cls] if (primary_cls is not None and primary_cls < len(primary_colors)) else (255,255,255)
+			cv2.rectangle(out, (int(x1), int(y1)), (int(x2), int(y2)), pcol, line_thickness)
 			label = f"{primary_classes[primary_cls]}"
-			if conf != -1: # add confidence if auto-annotated
-				label = label + f' {conf:.2f}'
-			label_size, _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_size, line_thickness)
-			label_w, label_h = label_size
-			cv2.rectangle(frame, (x1-line_thickness, y1 - label_h - line_thickness*4), (x1 + label_w + line_thickness*2, y1), (0, 0, 0), -1)
-			cv2.rectangle(frame, (x1, y1), (x2, y2), primary_colors[primary_cls], line_thickness)
-			cv2.putText(frame, label, (x1, y1 - line_thickness*3), cv2.FONT_HERSHEY_SIMPLEX, 
-						font_size, primary_colors[primary_cls], line_thickness, cv2.LINE_AA)
+			if conf != -1 and conf is not None:
+				try:
+					label = label + f" {conf:.2f}"
+				except Exception:
+					pass
+			cv2.putText(out, label, (int(x1), max(int(y1) - 6, 10)), cv2.FONT_HERSHEY_SIMPLEX, font_size, pcol, line_thickness, cv2.LINE_AA)
 
-	# Draw grey boxes
+	# grey masks (as previously)
 	for gx1, gy1, gx2, gy2 in grey_boxes:
-		overlay = frame.copy()
-		cv2.rectangle(overlay, (int(gx1*disp_scale_factor), int(gy1*disp_scale_factor)), (int(gx2*disp_scale_factor), int(gy2*disp_scale_factor)), (128, 128, 128), -line_thickness)
-		# ~ cv2.rectangle(overlay, (gx1, gy1), (gx2, gy2), (128, 128, 128), -line_thickness)
-		cv2.addWeighted(overlay, 0.5, frame, 0.5, 0, frame)
+		overlay = out.copy()
+		cv2.rectangle(overlay, (int(gx1), int(gy1)), (int(gx2), int(gy2)), (128,128,128), -1)
+		cv2.addWeighted(overlay, 0.5, out, 0.5, 0, out)
 
-def select_frame(x):
-	global frame_number, frame_updated
-	frame_number = x
-	frame_updated = True
-
-def refresh_display():
-	if original_frame is not None:
-		
-		x, y = cursor_pos
-	
-		x = int(x / disp_scale_factor)
-		y = int(y / disp_scale_factor)
-		
-		if original_frame is None:
-			return
-		
-		h, w = original_frame.shape[:2]
-		
-
-		
-		# Show temporary box while drawing (clipped to above bottom bar)
-		if show_mode == 1:
-			disp = original_frame.copy()
-		else:
-			disp = fr.copy()
-			
-		canvas = np.zeros((video_height + bottom_bar_height, video_width + right_frame_width + line_thickness, 3), dtype=disp.dtype)
-		canvas[:video_height,:video_width] = disp
-		disp = canvas
-		
-		
-		# Apply zoom to disp
-		if disp_scale_factor != 1.0:
-			disp = cv2.resize(disp, None, fx=disp_scale_factor, fy=disp_scale_factor, interpolation=cv2.INTER_LINEAR)
-							
-		draw_buttons(disp)
-		draw_boxes(disp)
-		
-		if drawing: # draw annotation box
-			color = (128, 128, 128) if grey_mode else primary_colors[active_primary]
-			# Clip drawing to above bottom bar
-			current_y = min(y, h)
-			cv2.rectangle(disp, (int(ix*disp_scale_factor), int(iy*disp_scale_factor)), (int(x*disp_scale_factor), int(current_y*disp_scale_factor)), color, line_thickness)
-		else: # draw crosshairs
-			cv2.line(disp, (int(x*disp_scale_factor), 0), (int(x*disp_scale_factor), int(h*disp_scale_factor)), (255, 255, 255), line_thickness)
-			cv2.line(disp, (0, int(y*disp_scale_factor)), (int(w*disp_scale_factor), int(y*disp_scale_factor)), (255, 255, 255), line_thickness)
-			
-		draw_zoom(disp, cursor_pos)  # Add zoom view to temporary drawing
-		
-		# draw current (last) frame number top-left so label matches trackbar
-		# ~ label = f"Frame (last): {frame_number}"
-		# ~ cv2.putText(disp, label, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, font_size, (255,255,255), line_thickness, cv2.LINE_AA)
-
-
-		cv2.imshow(video_name, disp)
-
-
-def draw_zoom(disp, cursor_pos):
-	if cursor_pos is None:
-		return
-	
-	cx, cy = cursor_pos
-	cx = int(cx/disp_scale_factor)
-	cy = int(cy/disp_scale_factor)
-	h = int(video_height)
-	w = int(video_width)
-	zoom_size = int(right_frame_width)
-	
-	# Skip if cursor is in bottom bar
-	# ~ if cy >= bottom_bar_top:
-		# ~ return
-	
-	# Calculate crop area around cursor
-	half_size = zoom_size // 4
-	x1 = max(0, cx - half_size)
-	y1 = max(0, cy - half_size)
-	x2 = min(w, cx + half_size)
-	y2 = min(h, cy + half_size)
-	
-	# Crop and enlarge
-	if fr is None:
-		return
-	
-	crop_static = fr[y1:y2, x1:x2]
-	crop_motion = original_frame[y1:y2, x1:x2]
-	
-	if crop_static.size == 0 or crop_motion.size == 0:
-		return
-		
-	# Get actual crop dimensions (may be smaller near edges)
-	crop_w = x2 - x1
-	crop_h = y2 - y1
-	
-	# Calculate cursor's relative position within crop
-	rel_x = cx - x1
-	rel_y = cy - y1
-	
-	# Resize both crops to the same zoomed size
-	zoom_w = int(zoom_size * disp_scale_factor)
-	zoom_h = int(zoom_size * disp_scale_factor)
-	zoomed_static = cv2.resize(crop_static, (zoom_w, zoom_h), interpolation=cv2.INTER_LINEAR)
-	zoomed_motion = cv2.resize(crop_motion, (zoom_w, zoom_h), interpolation=cv2.INTER_LINEAR)
-	
-	# Calculate crosshair position in zoomed image
-	zoom_x = int(rel_x * zoom_w / crop_w)
-	zoom_y = int(rel_y * zoom_h / crop_h)
-	
-	pos_x = int(video_width * disp_scale_factor) + line_thickness
-	pos_y = 0
+	return out
 	
 	
-	# Place zoomed images
-	disp[pos_y:pos_y+zoom_h, pos_x:pos_x+zoom_w] = zoomed_static
-	disp[pos_y+zoom_h:pos_y+zoom_h+zoom_h, pos_x:pos_x+zoom_w] = zoomed_motion
-	
-	# Draw crosshairs in static zoomed box
-	cv2.line(disp, 
-			 (pos_x, pos_y + zoom_y), 
-			 (pos_x + zoom_w, pos_y + zoom_y), 
-			 (255, 255, 255), line_thickness)
-	cv2.line(disp, 
-			 (pos_x + zoom_x, pos_y), 
-			 (pos_x + zoom_x, pos_y + zoom_h), 
-			 (255, 255, 255), line_thickness)
-	
-	# Draw crosshairs in motion zoomed box
-	cv2.line(disp, 
-			 (pos_x, pos_y + zoom_h + zoom_y), 
-			 (pos_x + zoom_w, pos_y + zoom_h + zoom_y), 
-			 (255, 255, 255), line_thickness)
-	cv2.line(disp, 
-			 (pos_x + zoom_x, pos_y + zoom_h), 
-			 (pos_x + zoom_x, pos_y + zoom_h + zoom_h), 
-			 (255, 255, 255), line_thickness)
-	
-	# Draw border around both zoomed regions
-	cv2.rectangle(disp, 
-				 (pos_x-1, pos_y-1), 
-				 (pos_x + zoom_w + 1, pos_y + zoom_h + 1 + zoom_h), 
-				 (0, 0, 0), line_thickness)
-	# line between zoom boxes
-	cv2.line(disp, 
-			 (pos_x, pos_y + zoom_h), 
-			 (pos_x + zoom_w, pos_y + zoom_h), 
-			 (0, 0, 0), line_thickness)
-
-
-	label = f"{primary_classes[active_primary]}"
-	label_size, _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_size, line_thickness)
-	label_w, label_h = label_size
-	cv2.rectangle(disp, (pos_x-line_thickness, pos_y + zoom_h - label_h - line_thickness*4), (pos_x + label_w + line_thickness*2, pos_y + zoom_h), (0, 0, 0), -1)
-	cv2.putText(disp, label, (pos_x, pos_y + zoom_h - line_thickness*2), cv2.FONT_HERSHEY_SIMPLEX, 
-							font_size, primary_colors[active_primary], line_thickness, cv2.LINE_AA)
-	if hierarchical_mode and primary_classes[active_primary] != secondary_classes[active_secondary]:
-		if primary_classes[active_primary] not in ignore_secondary:
-			label = f"{secondary_classes[active_secondary]}"
-			label_size, _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_size, line_thickness)
-			label_w, label_h = label_size
-			cv2.rectangle(disp, (pos_x-line_thickness, pos_y + zoom_h), (pos_x + label_w + line_thickness*2, pos_y + zoom_h + label_h + line_thickness*4), (0, 0, 0), -1)
-			cv2.putText(disp, label, (pos_x, pos_y + zoom_h + label_h + line_thickness*2), cv2.FONT_HERSHEY_SIMPLEX, 
-									font_size, secondary_colors[active_secondary], line_thickness, cv2.LINE_AA)		
-
-	# ─── Mini‐animation box ───────────────────────────────────────────
-	now = time.time()
-	if (now - last_mouse_move) > ANIM_STILL_THRESHOLD and len(raw_buf) == raw_buf.maxlen:
-			# Calculate crop area around cursor
-		half_size = zoom_size // 2 ## don't zoom animation
-		x1 = max(0, cx - half_size)
-		y1 = max(0, cy - half_size)
-		x2 = min(w, cx + half_size)
-		y2 = min(h, cy + half_size)
-		# pick which buffer index to draw based on elapsed
-		idx = int(((now - last_mouse_move) * ANIM_FPS) % raw_buf.maxlen)
-		frame_to_draw = raw_buf[idx]
-		# crop exactly same way
-		small_crop = frame_to_draw[y1:y2, x1:x2]
-		if small_crop.size:
-			anim_w = zoom_w   # reuse same dims
-			anim_h = zoom_h
-			anim_zoom = cv2.resize(small_crop, (anim_w, anim_h), interpolation=cv2.INTER_LINEAR)
-			# position: beneath the two existing zoom boxes
-			anim_x = pos_x
-			anim_y = pos_y + (zoom_h * 2)
-			# draw it
-			disp[anim_y:anim_y+anim_h, anim_x:anim_x+anim_w] = anim_zoom
-			# border
-			cv2.rectangle(disp,
-						  (anim_x-1, anim_y-1),
-						  (anim_x + anim_w+1, anim_y + anim_h+1),
-						  (0,0,0), line_thickness)
-
-
-def mouse_callback(event, x, y, flags, param):
-	global ix, iy, drawing, active_primary, active_secondary, active_class, grey_mode
-	global boxes, grey_boxes, cursor_pos, zoom_hide
-
-	cursor_pos = (x, y)
-	
-	x = int(x / disp_scale_factor)
-	y = int(y / disp_scale_factor)
-	
-	if original_frame is None:
-		return
-	
-	h = int(video_height * disp_scale_factor)
-	w = int(video_width * disp_scale_factor)
-	
-	if event == cv2.EVENT_LBUTTONDOWN:
-		if x >= w and y >= h:  # click outside video region
-			# Handle button clicks
-			if hierarchical_mode:
-				total_buttons = len(primary_classes) + len(secondary_classes) + 1
-			else:
-				total_buttons = len(primary_classes) + 1
-			button_width = w // total_buttons
-			button_idx = x // button_width
-			
-			# Grey button
-			if button_idx == total_buttons - 1:
-				grey_mode = not grey_mode
-			# Primary class buttons
-			elif button_idx < len(primary_classes):
-				active_primary = button_idx
-				grey_mode = False
-			# Secondary class buttons
-			elif hierarchical_mode:
-				active_secondary = button_idx - len(primary_classes)
-				grey_mode = False
-			refresh_display()
-		else:
-			# Start drawing a box (ensure above bottom bar)
-			drawing = True
-			ix, iy = x, y
-			refresh_display()
-	
-	elif event == cv2.EVENT_MOUSEMOVE:
-		zoom_hide = 0
-		if drawing:
-			last_mouse_move = time.time() # record movement timestamp
-			refresh_display()
-
-	elif event == cv2.EVENT_LBUTTONUP and drawing:
-		drawing = False
-		# Clip box coordinates to above bottom bar
-		current_y = min(y, h)
-		
-		if abs(x - ix) > 5 and abs(current_y - iy) > 5:
-			if grey_mode:
-				# Add grey area (clipped to above bottom bar)
-				grey_boxes.append((min(ix, x), min(iy, current_y), max(ix, x), max(iy, current_y)))
-			else:
-				# Add a new box (clipped to above bottom bar)
-				x1, y1 = min(ix, x), min(iy, current_y)
-				x2, y2 = max(ix, x), max(iy, current_y)
-				
-				if hierarchical_mode:
-					boxes.append((x1, y1, x2, y2, active_primary, active_secondary,  -1, -1))
-				else:
-					boxes.append((x1, y1, x2, y2, active_primary, -1))
-		
-		refresh_display()
-
-	elif event == cv2.EVENT_RBUTTONUP:
-		# Check if right-click is in bottom bar (ignore if so)
-		if y >= h:
-			return
-			
-		# Check boxes (reverse order to delete topmost first)
-		deleted = False
-		for i in range(len(boxes)-1, -1, -1):
-			box = boxes[i]
-			# Extract coordinates (first 4 elements)
-			x1, y1, x2, y2 = box[0], box[1], box[2], box[3]
-			if x1 <= x <= x2 and y1 <= y <= y2:
-				del boxes[i]
-				deleted = True
-				break
-				
-		# Check grey boxes if no regular box was deleted
-		if not deleted:
-			for i in range(len(grey_boxes)-1, -1, -1):
-				gx1, gy1, gx2, gy2 = grey_boxes[i]
-				if gx1 <= x <= gx2 and gy1 <= y <= gy2:
-					del grey_boxes[i]
-					break
-					
-		refresh_display()
-
-
-
 def save_annotation():
 	global annot_count
 	if original_frame is None or (not boxes and not grey_boxes) and save_empty_frames == 'false':
@@ -1034,19 +820,6 @@ def save_annotation():
 			cv2.imwrite(crop_path, static_crop)
 
 
-	# ~ # Save grey box coordinates
-	# ~ mask_content = ""
-	# ~ for gx1, gy1, gx2, gy2 in grey_boxes:
-		# ~ mask_content += f"{gx1} {gy1} {gx2} {gy2}\n"
-	
-	# ~ # Save to both static and motion directories
-	# ~ static_mask_path = os.path.join(static_target_lbl_dir, f"{base_filename}.mask.txt")
-	# ~ motion_mask_path = os.path.join(motion_target_lbl_dir, f"{base_filename}.mask.txt")
-	
-	# ~ for path in [static_mask_path, motion_mask_path]:
-		# ~ with open(path, 'w') as f:
-			# ~ f.write(mask_content)
-
 	# Create mask directories
 	static_mask_dir = static_target_lbl_dir.replace('labels', 'masks')
 	motion_mask_dir = motion_target_lbl_dir.replace('labels', 'masks')
@@ -1070,362 +843,845 @@ def save_annotation():
 
 	print(f"Saved #{annot_count} frame {frame_number} -> {annot_type}")
 
-	annot_count += 1
-
-
-def iou(box1, box2):
-	xa = max(box1[0], box2[0]); ya = max(box1[1], box2[1])
-	xb = min(box1[2], box2[2]); yb = min(box1[3], box2[3])
-	inter = max(0, xb-xa) * max(0, yb-ya)
-	area1 = (box1[2]-box1[0])*(box1[3]-box1[1])
-	area2 = (box2[2]-box2[0])*(box2[3]-box2[1])
-	prop1 = inter/area1 
-	prop2 = inter/area2
-	# return the larger proportional overlap - e.g. if one box is entirely inside another, this will return a 1.0, whereas the previous wouldn't
-	if prop1 > prop2:
-		return prop1 if prop1 > 0 else 0
-	else:
-		return prop2 if prop2 > 0 else 0
-
-## remove overlapping detections	
-def non_max_suppression(box_list):
-	"""Remove overlapping detections keeping highest confidence box."""
-	if len(box_list) == 0:
-		return []
+	annot_count += 1	
 	
-	# Calculate overall confidence for each box
-	confidences = []
-	for box in box_list:
-		if hierarchical_mode:
-			conf = box[6]
-		else:
-			conf = box[5]
 
-		confidences.append(conf)
-	
-	# Sort by confidence (descending)
-	sorted_indices = sorted(range(len(box_list)), key=lambda i: confidences[i], reverse=True)
-	suppressed = [False] * len(box_list)
-	keep = []
-	
-	for i in range(len(sorted_indices)):
-		idx_i = sorted_indices[i]
-		if suppressed[idx_i]:
-			continue
-			
-		keep.append(box_list[idx_i])
-		box_i = box_list[idx_i]
-		coords_i = (box_i[0], box_i[1], box_i[2], box_i[3])
+# ---------- Tk UI (composite single-image display) ----------
+class AnnotatorTk:
+	def __init__(self, root):
+		self.root = root
+		root.title(f"BehaveAI — {os.path.basename(video_path)}")
 		
-		for j in range(i + 1, len(sorted_indices)):
-			idx_j = sorted_indices[j]
-			if suppressed[idx_j]:
+		# sensible default window geometry so the main video panel is visible on launch
+		default_w = max(1000, int(video_width * 1.2))
+		default_h = max(700, int(video_height * 1.2))
+		root.geometry(f"{default_w}x{default_h}")
+		root.minsize(900, 600)
+
+		# seek bar
+		# ~ self.seek = ttk.Scale(root, from_=0, to=max(0, total_frames - 1), orient='horizontal', command=self.on_seek)
+		# ~ self.seek.pack(fill='x', padx=4, pady=4)
+
+		# main layout
+		self.main = tk.Frame(root)
+		self.main.pack(fill='both', expand=True)
+
+		# left container which holds the single composite canvas
+		self.left = tk.Frame(self.main)
+		self.left.pack(side='left', fill='both', expand=True)
+		self.left.pack_propagate(False)
+
+		# conservative initial canvas size to avoid early thrash
+		self.canvas = tk.Canvas(self.left, bg='black', highlightthickness=0,
+								width=min(800, video_width), height=min(600, video_height))
+		self.canvas.pack(fill='both', expand=True)
+
+		# --- bottom control bar (seek + grey toggle) ---
+		self.controls = tk.Frame(self.left)
+		self.controls.pack(fill='x', pady=(4, 2))
+		
+		# grey toggle (left)
+		self.grey_btn = tk.Button(self.controls, text="Grey (g)", width=10, command=self.toggle_grey)
+		self.grey_btn.pack(side='left', padx=4)
+		
+		# frame number label (shows current frame number)
+		self.frame_var = tk.StringVar(value=str(frame_number))
+		self.frame_label = tk.Label(self.controls, textvariable=self.frame_var, width=8, anchor='w')
+		self.frame_label.pack(side='left', padx=(0,6))
+		
+		# seek bar fills remaining width
+		# ~ self.seek = ttk.Scale(
+			# ~ self.controls,
+			# ~ from_=0,
+			# ~ to=max(0, total_frames - 1),
+			# ~ orient='horizontal',
+			# ~ command=self.on_seek
+		# ~ )
+		# ~ self.seek.pack(side='left', fill='x', expand=True, padx=4)
+		
+		# ~ self.seek.set(frame_number)
+
+		# container for tickline + seek scale so ticks sit *above* the slider
+		self.seek_container = tk.Frame(self.controls)
+		self.seek_container.pack(side='left', fill='x', expand=True, padx=4)
+		
+		# small tick canvas sitting above the actual scale (height can be tuned)
+		self.seek_ticks = tk.Canvas(self.seek_container, height=8, bg=self.controls.cget('bg'), highlightthickness=0)
+		self.seek_ticks.pack(fill='x', padx=0, pady=(0,1))
+		
+		self.seek_ticks.bind('<Configure>', lambda e: self.draw_seek_ticks())
+
+		
+		# the real seek scale below the tick rail
+		self.seek = ttk.Scale(
+			self.seek_container,
+			from_=0,
+			to=max(0, total_frames - 1),
+			orient='horizontal',
+			command=self.on_seek
+		)
+		self.seek.pack(fill='x', expand=True)
+		
+
+		
+
+		self.buttons_frame = tk.Frame(self.left)
+		self.buttons_frame.pack(side='bottom', fill='x', pady=(4,4))
+
+		self.primary_buttons = []
+		self.secondary_buttons = []
+
+		# create primary buttons
+		col = 0
+		for idx, name in enumerate(primary_classes):
+			if name == '0':
 				continue
-				
-			box_j = box_list[idx_j]
-			coords_j = (box_j[0], box_j[1], box_j[2], box_j[3])
-			
-			if iou(coords_i, coords_j) > iou_thresh:
-				suppressed[idx_j] = True
-				
-	return keep
+			color_hex = None
+			if idx < len(primary_colors):
+				bgr = primary_colors[idx]
+				color_hex = '#%02x%02x%02x' % (bgr[2], bgr[1], bgr[0])
+			btn = tk.Button(self.buttons_frame, text="{} ({})".format(name, primary_classes_info[idx][0]),
+							width=12, relief='raised', command=lambda i=idx: self.select_primary(i))
+			btn.grid(row=0, column=col, padx=2, pady=2)
+			self.primary_buttons.append((btn, color_hex, idx))
+			col += 1
 
-def auto_annotate():
-	# Collect all primary detections
-	# ~ all_detections = []
-	global boxes
-	
-	# Primary static detection
-	if primary_static_classes[0] != '0' and model_static != None:
-		results_static = model_static.predict(fr, conf=primary_conf_thresh, verbose=False)
-		for box in results_static[0].boxes:
-			# ~ coords = tuple(map(int, box.xyxy[0].tolist()))
-			class_idx = int(box.cls[0])
-			primary_class = primary_static_classes[class_idx]
-			conf = float(box.conf[0])
-			x1, y1, x2, y2 = map(int, box.xyxy[0])
+		# secondary row
+		if hierarchical_mode:
+			col = 0
+			for idx, name in enumerate(secondary_classes):
+				color_hex = None
+				if idx < len(secondary_colors):
+					bgr = secondary_colors[idx]
+					color_hex = '#%02x%02x%02x' % (bgr[2], bgr[1], bgr[0])
+				btn = tk.Button(self.buttons_frame, text="{} ({})".format(name, secondary_classes_info[idx][0]),
+								width=12, relief='raised', command=lambda i=idx: self.select_secondary(i))
+				btn.grid(row=1, column=col, padx=2, pady=2)
+				self.secondary_buttons.append((btn, color_hex, idx))
+				col += 1
 
-			if hierarchical_mode:
-				# crop and run secondary classifier on static image
-				if len(secondary_static_classes) >= 2:
-					sec_model = secondary_static_models.get(primary_class, None)
-					sec_classes = secondary_static_classes
-					crop_img = fr
-				# Fallback to motion secondary model if static not available
-				elif len(secondary_motion_classes) >= 2:
-					sec_model = secondary_motion_models.get(primary_class, None)
-					sec_classes = secondary_motion_classes
-					crop_img = motion_image if primary_motion_classes[0] != '0' else fr
+		# grey toggle
+		# ~ self.grey_btn = tk.Button(self.buttons_frame, text="Grey (g)", width=10, command=self.toggle_grey)
+		# ~ self.grey_btn.grid(row=2, column=0, padx=2, pady=2)
 
-				# Get the cropped region
-				crop = None
-				if crop_img is not None:
-					crop = crop_img[y1:y2, x1:x2]
-				
-				secondary_class = primary_class
-				secondary_conf = 1.0
-				secondary_class_idx = -1
+		# bind events
+		self.canvas.bind('<ButtonPress-1>', self.on_mouse_down)
+		self.canvas.bind('<B1-Motion>', self.on_mouse_drag)
+		self.canvas.bind('<ButtonRelease-1>', self.on_mouse_up)
+		self.canvas.bind('<Button-3>', self.on_right_click)
+		self.canvas.bind('<Motion>', self.on_motion)
 
-				# Run secondary classification if we have a model and valid crop
-				if sec_model and crop is not None and crop.size > 0:
-					sec_results = sec_model.predict(crop, verbose=False)
-					if sec_results[0].probs is not None:
-						secondary_class_idx = sec_results[0].probs.top1
-						secondary_conf = sec_results[0].probs.top1conf.item()
-						secondary_class = sec_model.names[secondary_class_idx]
+		root.bind_all('<Key>', self.on_key_all)
+		# ~ root.bind_all('<Left>', lambda e: self.key_step(-1))
+		# ~ root.bind_all('<Right>', lambda e: self.key_step(1))
+		root.bind_all('<space>', lambda e: self.toggle_show_mode())
+		root.bind_all('<Return>', lambda e: self.key_save())
 
-				boxes.append((x1, y1, x2, y2, class_idx, secondary_class_idx, conf, secondary_conf))#conf 1 & 2 need separating
-				
+		# drawing/display state
+		self.display_size = (video_width, video_height)
+		self.tk_img = None
+		self.last_mouse = None
+		self.drawing = False
+		self.start_canvas_xy = None
 
-			else:
-				boxes.append((x1, y1, x2, y2, class_idx, conf))
+		# small layout tuning: padding between main and zoom column when composing
+		self._composite_gap = 8
+
+		# schedule loop
+		self.root.after(30, self.loop)
+		self.update_button_states()
 
 
-	# Primary motion detection
-	if primary_motion_classes[0] != '0' and model_motion != None:
-		results_motion = model_motion.predict(motion_image, conf=primary_conf_thresh, verbose=False)
-		for box in results_motion[0].boxes:
-			class_idx = int(box.cls[0])
-			primary_class = primary_motion_classes[class_idx]
-			conf = float(box.conf[0])
-			x1, y1, x2, y2 = map(int, box.xyxy[0])
-
-			if hierarchical_mode:
-				# crop and run secondary classifier on static image
-				if len(secondary_static_classes) >= 2:
-					sec_model = secondary_static_models.get(primary_class, None)
-					sec_classes = secondary_static_classes
-					crop_img = fr
-				# Fallback to motion secondary model if static not available
-				elif len(secondary_motion_classes) >= 2:
-					sec_model = secondary_motion_models.get(primary_class, None)
-					sec_classes = secondary_motion_classes
-					crop_img = motion_image if primary_motion_classes[0] != '0' else fr
-
-				# Get the cropped region
-				crop = None
-				if crop_img is not None:
-					crop = crop_img[y1:y2, x1:x2]
-				
-				secondary_class = primary_class
-				secondary_conf = 1.0
-				secondary_class_idx = -1
-
-				# Run secondary classification if we have a model and valid crop
-				if sec_model and crop is not None and crop.size > 0:
-					sec_results = sec_model.predict(crop, verbose=False)
-					if sec_results[0].probs is not None:
-						secondary_class_idx = sec_results[0].probs.top1
-						secondary_conf = sec_results[0].probs.top1conf.item()
-						secondary_class = sec_model.names[secondary_class_idx]
-
-				boxes.append((x1, y1, x2, y2, class_idx + len(primary_static_classes), secondary_class_idx, conf, secondary_conf))#conf 1 & 2 need separating
-				
-			else:
-				boxes.append((x1, y1, x2, y2, class_idx + len(primary_static_classes), conf))
-
-	if boxes:
-		boxes = non_max_suppression(boxes)
-
-
-
-
-# Setup UI and loop
-cv2.namedWindow(video_name, cv2.WINDOW_NORMAL)
-# ~ cv2.createTrackbar('Frame', video_name, 0, total_frames - frameWindow + frame_skip -1, select_frame)
-cv2.createTrackbar('Frame', video_name, 0, max(0, total_frames - 1), select_frame)
-cv2.setTrackbarPos('Frame', video_name, frame_number)
-cv2.setMouseCallback(video_name, mouse_callback)
-
-
-
-while True:
-	
-	now = time.time()
-
-	# Load new frame
-	if frame_updated:
-		frame_updated = False
-		boxes.clear()
-		grey_boxes.clear()
-	
-		# Treat frame_number as the *last* frame of the window
-		last_frame = frame_number
-		start_frame = last_frame - frameWindow + 1  # start so that last read frame == last_frame
-	
-		# If the window extends before the start of video => show a blank area
-		if start_frame < 0:
-			# blank frames for display when not enough preceding frames
-			original_frame = np.zeros((video_height, video_width, 3), dtype=np.uint8)
-			fr = original_frame.copy()
-			motion_image = original_frame.copy()
-			raw_buf.clear()
-			need_redraw = True
-			last_anim_draw = time.time()
-			# Do not auto-annotate when there aren't enough frames
-			# (user wanted blank display for numbers below window size)
-			# Leave boxes empty and continue to redraw the blank.
+	# button handlers
+	def select_primary(self, class_idx):
+		global active_primary, grey_mode, show_mode
+		active_primary = class_idx
+		grey_mode = False
+		if active_primary < len(primary_static_classes):
+			show_mode = -1
 		else:
-			# Position capture at start_frame (so last read corresponds to last_frame)
-			capture.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
-			prev_frames = [None] * 3
-			motion_image = None
-	
-			frame_count = 0
-			raw_buf.clear()
-			for i in range(frameWindow):
-				ret, raw_frame = capture.read()
-				if not ret:
-					break
-	
-				if frame_count == 0:
-					fr = raw_frame.copy()
-					if scale_factor != 1.0:
-						fr = cv2.resize(fr, (0, 0), fx=scale_factor, fy=scale_factor)
-					raw_buf.append(fr.copy())
-					gray = cv2.cvtColor(fr, cv2.COLOR_BGR2GRAY)
-	
-					if i == 0:
-						prev_frames = [gray.copy()] * 3
-						# first processed frame in window; continue to next raw read
-						frame_count += 1
-						if frame_count > frame_skip:
-							frame_count = 0
-						continue
-	
-					diffs = [cv2.absdiff(prev_frames[j], gray) for j in range(3)]
-	
-					if strategy == 'exponential':
-						prev_frames[0] = gray
-						prev_frames[1] = cv2.addWeighted(prev_frames[1], expA, gray, expA2, 0)
-						prev_frames[2] = cv2.addWeighted(prev_frames[2], expB, gray, expB2, 0)
-					elif strategy == 'sequential':
-						prev_frames[2] = prev_frames[1]
-						prev_frames[1] = prev_frames[0]
-						prev_frames[0] = gray
-	
-				frame_count += 1
-				if frame_count > frame_skip:
-					frame_count = 0
-	
-			# Build motion image from diffs/gray (same logic as before)
-			if 'diffs' in locals():
-				if chromatic_tail_only == 'true':
-					tb = cv2.subtract(diffs[0], diffs[1])
-					tr = cv2.subtract(diffs[2], diffs[1])
-					tg = cv2.subtract(diffs[1], diffs[0])
-	
-					blue = cv2.addWeighted(gray, lum_weight, tb, rgb_multipliers[2], motion_threshold)
-					green = cv2.addWeighted(gray, lum_weight, tg, rgb_multipliers[1], motion_threshold)
-					red = cv2.addWeighted(gray, lum_weight, tr, rgb_multipliers[0], motion_threshold)
-				else:
-					blue = cv2.addWeighted(gray, lum_weight, diffs[0], rgb_multipliers[2], motion_threshold)
-					green = cv2.addWeighted(gray, lum_weight, diffs[1], rgb_multipliers[1], motion_threshold)
-					red = cv2.addWeighted(gray, lum_weight, diffs[2], rgb_multipliers[0], motion_threshold)
-	
-				motion_image = cv2.merge((blue, green, red)).astype(np.uint8)
-				original_frame = motion_image.copy()
-	
-				if auto_ann_switch == 1:
-					auto_annotate()
-					zoom_hide = 1
-	
-			need_redraw = True
-			last_anim_draw = time.time()
-	else:
-		need_redraw = False
-		
-	# animation tick
-	if (now - last_mouse_move) > ANIM_STILL_THRESHOLD and (now - last_anim_draw) >= ANIM_DT:
-		last_anim_draw = now
-		# redraw in place (draw_zoom will pick the correct buffer index)
-		need_redraw = True
+			show_mode = 1
+		self.update_button_states()
+		self.redraw()
 
-	# listen for keys
-	if cv2.getWindowProperty(video_name, cv2.WND_PROP_VISIBLE) < 1:
-		break
+	def select_secondary(self, class_idx):
+		global active_secondary, grey_mode, show_mode
+		active_secondary = class_idx
+		grey_mode = False
+		if class_idx < len(secondary_static_classes):
+			show_mode = -1
+		else:
+			show_mode = 1
+		self.update_button_states()
+		self.redraw()
+
+	def toggle_grey(self):
+		global grey_mode
+		grey_mode = not grey_mode
+		self.update_button_states()
+
+	def update_button_states(self):
+		for btn, col, cls in self.primary_buttons:
+			if cls == active_primary:
+				btn.config(relief='sunken')
+				if col:
+					try:
+						btn.config(bg=col)
+					except Exception:
+						pass
+			else:
+				btn.config(relief='raised', bg='#888888')
+		for btn, col, cls in self.secondary_buttons:
+			if cls == active_secondary:
+				btn.config(relief='sunken')
+				if col:
+					try:
+						btn.config(bg=col)
+					except Exception:
+						pass
+			else:
+				btn.config(relief='raised', bg='#888888')
+		self.grey_btn.config(relief='sunken' if grey_mode else 'raised')
+
+	def draw_seek_ticks(self):
+		"""Draw small ticks for annotated frames and a red cursor for current frame."""
+		try:
+			self.seek_ticks.delete('all')
+		except Exception:
+			return
+	
+		w = self.seek_ticks.winfo_width()
+		if w <= 2:
+			# widget not yet realised — try again shortly
+			self.root.after(100, self.draw_seek_ticks)
+			return
+	
+		# get annotated frames for this video's video_label
+		ann_set = annotated_frames_map.get(video_label, set())
+		if not ann_set:
+			return
+	
+		# draw ticks (color / height are adjustable)
+		for frm in ann_set:
+			if frm < 0 or frm >= max(1, total_frames):
+				continue
+			x = int(round((frm / float(max(1, total_frames - 1))) * (w - 1)))
+			# short yellow tick (top-down)
+			# ~ self.seek_ticks.create_line(x, 0, x, 6, fill='yellow', width=1)
+			self.seek_ticks.create_line(x, 0, x, 10, fill='red', width=2)
+	
+		# draw current-frame cursor
+		cur_x = int(round((frame_number / float(max(1, total_frames - 1))) * (w - 1)))
+		# ~ self.seek_ticks.create_line(cur_x, 0, cur_x, 7, fill='red', width=2)
+		self.seek_ticks.create_line(cur_x, 0, cur_x, 10, fill='black', width=2)
 		
-	key = cv2.waitKey(5) & 0xFF
-	if key == 27:  # ESC
-		break
-	if key == 8:  # BACKSPACE
-		boxes.clear()
-		grey_boxes.clear()
-	elif key == 13:  # ENTER
-		save_annotation()
-		grey_boxes.clear()
-		boxes.clear()
-		
-		frame_number = min(frame_number + 1, total_frames - 2)
+	def refresh_annotation_index_map(self):
+		"""Rebuild global `items` and annotated_frames_map from the shared index."""
+		try:
+			global items, annotated_frames_map
+			items = annotation_index.list_images_labels_and_masks()
+			annotated_frames_map = build_annot_index_map(items)
+		except Exception:
+			pass
+	
+	def jump_to_annotated(self, direction):
+		"""Jump to previous (direction=-1) or next (direction=+1) annotated frame for current video_label.
+		   If none found, do nothing.
+		"""
+		try:
+			ann_set = sorted(annotated_frames_map.get(video_label, []))
+			if not ann_set:
+				return
+			cur = int(frame_number)
+			if direction > 0:
+				# next annotated frame strictly greater than cur
+				for frm in ann_set:
+					if frm > cur:
+						self.seek.set(frm)
+						self.on_seek(str(frm))
+						return
+				# wrap to first
+				self.seek.set(ann_set[0])
+				self.on_seek(str(ann_set[0]))
+			else:
+				# previous annotated frame strictly less than cur
+				for frm in reversed(ann_set):
+					if frm < cur:
+						self.seek.set(frm)
+						self.on_seek(str(frm))
+						return
+				# wrap to last
+				self.seek.set(ann_set[-1])
+				self.on_seek(str(ann_set[-1]))
+		except Exception:
+			pass
+
+
+	# seek
+	# ~ def on_seek(self, val):
+		# ~ global frame_number, frame_updated
+		# ~ try:
+			# ~ frame_number = int(float(val))
+		# ~ except Exception:
+			# ~ frame_number = 0
+		# ~ frame_updated = True
+		# ~ try:
+			# ~ self.frame_var.set(f'Frame {str(frame_number)}')
+		# ~ except Exception:
+			# ~ pass
+
+	def on_seek(self, val):
+		global frame_number, frame_updated
+		try:
+			frame_number = int(float(val))
+		except Exception:
+			frame_number = 0
 		frame_updated = True
-		cv2.setTrackbarPos('Frame', video_name, frame_number)
+		try:
+			self.frame_var.set(f'Frame {str(frame_number)}')
+		except Exception:
+			pass
+		# redraw ticks to show current cursor
+		try:
+			self.draw_seek_ticks()
+		except Exception:
+			pass
+	
 
-		
-	elif key == ord('u'):  # Undo
-		if grey_mode:
-			if grey_boxes:
-				grey_boxes.pop()
-		elif boxes:
-			boxes.pop()
-	elif key == ord('g'):  # Grey mode
-		grey_mode = True
-		
-	elif key in primary_class_dict and key in secondary_class_dict: # dual key for both primary and secondary
-		if key != ord('0'):
-			print("zero")
-			active_primary = primary_class_dict[key]
-			active_secondary = secondary_class_dict[key]
-			grey_mode = False
-		
-	elif key in primary_class_dict:
-		if key != ord('0'):
-			active_primary = primary_class_dict[key]
-			if active_primary < len(primary_static_classes):
-				show_mode = -1 # static RGB
+
+	def canvas_to_video(self, canvas_point):
+		"""
+		Map a canvas (x,y) into video coordinates (vx, vy).
+		Accounts for the composite image being uniformly scaled to fit the canvas.
+		Top-left anchored (composite drawn at 0,0).
+		"""
+		cx, cy = canvas_point
+		c_w = self.canvas.winfo_width() or 1
+		c_h = self.canvas.winfo_height() or 1
+	
+		# fallback values if redraw hasn't set them yet
+		disp_w, disp_h = getattr(self, 'display_size', (video_width, video_height))
+		scale = getattr(self, 'composite_scale', 1.0)
+	
+		# scaled displayed video region (left part of composite)
+		scaled_disp_w = max(1, int(round(disp_w * scale)))
+		scaled_disp_h = max(1, int(round(disp_h * scale)))
+	
+		# if click is outside scaled main display, clamp to nearest edge
+		if cx < 0: cx = 0
+		if cy < 0: cy = 0
+	
+		# only map if inside scaled main display; if outside we still return nearest edge point
+		# map back to display coords then to video coords
+		display_x = min(cx, scaled_disp_w - 1) / scale
+		display_y = min(cy, scaled_disp_h - 1) / scale
+	
+		vx = display_x * (video_width / float(max(1, disp_w)))
+		vy = display_y * (video_height / float(max(1, disp_h)))
+		return (vx, vy)
+	
+
+
+	def video_to_canvas(self, vx, vy):
+		disp_w, disp_h = self.display_size
+		cx = int(round((vx * disp_w / float(video_width))))
+		cy = int(round((vy * disp_h / float(video_height))))
+		return (cx, cy)
+
+	# drawing handlers
+	def on_mouse_down(self, event):
+		self.drawing = True
+		self.start_canvas_xy = (event.x, event.y)
+		self.last_mouse = (event.x, event.y)
+
+	def on_mouse_drag(self, event):
+		if not self.drawing:
+			return
+		self.last_mouse = (event.x, event.y)
+		self.redraw(temp_rect=(self.start_canvas_xy, (event.x, event.y)))
+
+	def on_mouse_up(self, event):
+		if not self.drawing:
+			return
+		self.drawing = False
+		start_v = self.canvas_to_video(self.start_canvas_xy)
+		end_v = self.canvas_to_video((event.x, event.y))
+		x1, x2 = sorted([int(round(start_v[0])), int(round(end_v[0]))])
+		y1, y2 = sorted([int(round(start_v[1])), int(round(end_v[1]))])
+		x1 = max(0, min(video_width-1, x1)); x2 = max(0, min(video_width-1, x2))
+		y1 = max(0, min(video_height-1, y1)); y2 = max(0, min(video_height-1, y2))
+		if abs(x2-x1) > 5 and abs(y2-y1) > 5:
+			if grey_mode:
+				grey_boxes.append((x1, y1, x2, y2))
 			else:
-				show_mode =1 # motion false colour
-			grey_mode = False
+				if hierarchical_mode:
+					boxes.append((x1, y1, x2, y2, active_primary, active_secondary, -1, -1))
+				else:
+					boxes.append((x1, y1, x2, y2, active_primary, -1))
+		self.redraw()
+
+	def on_right_click(self, event):
+		v = self.canvas_to_video((event.x, event.y))
+		x, y = int(v[0]), int(v[1])
+		removed = False
+		for i in range(len(boxes)-1, -1, -1):
+			bx1, by1, bx2, by2 = boxes[i][0], boxes[i][1], boxes[i][2], boxes[i][3]
+			if bx1 <= x <= bx2 and by1 <= y <= by2:
+				del boxes[i]; removed = True; break
+		if not removed:
+			for i in range(len(grey_boxes)-1, -1, -1):
+				gx1, gy1, gx2, gy2 = grey_boxes[i]
+				if gx1 <= x <= gx2 and gy1 <= y <= gy2:
+					del grey_boxes[i]; break
+		self.redraw()
+
+	def on_motion(self, event):
+		self.last_mouse = (event.x, event.y)
+		self.redraw()
+
+	# keyboard
+	def on_key_all(self, event):
+		global active_primary, active_secondary, grey_mode, boxes, grey_boxes, frame_number, frame_updated, show_mode
+
+		ch = event.char
+		ks = event.keysym
+
+		# Frame step - step larger when Shift is held (event.state & 0x1 tests Shift mask)
+		# ~ if ks == 'Left':
+			# ~ step = -10 if (event.state & 0x1) else -1
+			# ~ self.key_step(step)
+			# ~ return
+		# ~ if ks == 'Right':
+			# ~ step = 10 if (event.state & 0x1) else 1
+			# ~ self.key_step(step)
+			# ~ return
 			
-	elif key in secondary_class_dict:
-		if key != ord('0'):
-			active_secondary = secondary_class_dict[key]
-			if active_secondary < len(secondary_static_classes):
-				show_mode = -1 # static RGB
-			else:
-				show_mode =1 # motion false colour
-			grey_mode = False
+		# Frame step - step larger when Shift is held (event.state & 0x1 tests Shift mask)
+		# Support CTRL + Left/Right to jump to previous/next annotated frame (event.state & 0x4 tests CTRL mask on X11)
+		if ks == 'Left':
+			# CTRL jump to previous annotated frame
+			if (event.state & 0x4):
+				self.jump_to_annotated(-1)
+				return
+			step = -10 if (event.state & 0x1) else -1
+			self.key_step(step)
+			return
+		if ks == 'Right':
+			# CTRL jump to next annotated frame
+			if (event.state & 0x4):
+				self.jump_to_annotated(+1)
+				return
+			step = 10 if (event.state & 0x1) else 1
+			self.key_step(step)
+			return
+		
+
+		if ch:
+			c_ord = ord(ch)
+			if c_ord in primary_class_dict and c_ord in secondary_class_dict:
+				if ch != '0':
+					active_primary = primary_class_dict[c_ord]
+					active_secondary = secondary_class_dict[c_ord]
+					grey_mode = False
+					if active_primary < len(primary_static_classes):
+						show_mode = -1
+					else:
+						show_mode = 1
+					self.update_button_states()
+					return
+			if c_ord in primary_class_dict:
+				if ch != '0':
+					active_primary = primary_class_dict[c_ord]
+					grey_mode = False
+					if active_primary < len(primary_static_classes):
+						show_mode = -1
+					else:
+						show_mode = 1
+					self.update_button_states()
+					return
+			if c_ord in secondary_class_dict:
+				if ch != '0':
+					active_secondary = secondary_class_dict[c_ord]
+					grey_mode = False
+					if active_secondary < len(secondary_static_classes):
+						show_mode = -1
+					else:
+						show_mode = 1
+					self.update_button_states()
+					return
+
+		if ch == 'u':
+			if grey_mode:
+				if grey_boxes: grey_boxes.pop()
+			elif boxes:
+				boxes.pop()
+			self.redraw()
+			return
+
+		if ch == 'g':
+			self.toggle_grey()
+			return
+
+		if ks == 'Return':
+			save_annotation()
+			boxes.clear(); grey_boxes.clear()
+			frame_number = min(frame_number + 1, total_frames - 1)
+			frame_updated = True
+			self.seek.set(frame_number)
 			
-	elif key == 83 or key == 93:  # Right arrow or ]
+			try:
+				# refresh index and redraw ticks immediately
+				self.refresh_annotation_index_map()
+				self.draw_seek_ticks()
+			except Exception:
+				pass
+			self.redraw()
+			return
+			
+			
+			
+			return
+
+	def key_step(self, delta):
+		global frame_number, frame_updated
+		frame_number = min(max(0, frame_number + delta), total_frames - 1)
+		frame_updated = True
+		self.seek.set(frame_number)
+
+	def toggle_show_mode(self):
+		global show_mode
+		show_mode *= -1
+
+	# ~ def key_save(self):
+		# ~ save_annotation()
+		# ~ boxes.clear(); grey_boxes.clear()
+		# ~ global frame_number, frame_updated
+		# ~ frame_number = min(frame_number + 1, total_frames - 1)
+		# ~ frame_updated = True
+		# ~ self.seek.set(frame_number)
+
+	def key_save(self):
+		save_annotation()
+		boxes.clear(); grey_boxes.clear()
+		global frame_number, frame_updated
 		frame_number = min(frame_number + 1, total_frames - 1)
 		frame_updated = True
-		cv2.setTrackbarPos('Frame', video_name, frame_number)
-	elif key == 81 or key == 91:  # Left arrow or [
-		frame_number = max(frame_number - 1, 0)
-		frame_updated = True
-		cv2.setTrackbarPos('Frame', video_name, frame_number)
-	elif key == 46:  # > (.)
-		frame_number = min(frame_number + 10, total_frames - 1)
-		frame_updated = True
-		cv2.setTrackbarPos('Frame', video_name, frame_number)
-	elif key == 44:  # < (,)
-		frame_number = max(frame_number - 10, 0)
-		frame_updated = True
-		cv2.setTrackbarPos('Frame', video_name, frame_number)
-	elif key == 32:  # SPACE
-		show_mode *= -1
-	elif key == 35:  # HASH # KEY
-		auto_ann_switch *= -1
-		if auto_ann_switch == 1:
-			auto_annotate()
-		zoom_hide = 1
-	elif key == 45:  # - minus
-		disp_scale_factor *= 0.8
-	elif key == 61:  # =+ equals (plus)
-		disp_scale_factor *= 1.25
+		self.seek.set(frame_number)
+		try:
+			self.refresh_annotation_index_map()
+			self.draw_seek_ticks()
+		except Exception:
+			pass
+	
+
+	def redraw(self, temp_rect=None):
+		"""
+		Compose main display + three zoom panes into a single composite image,
+		scale that composite uniformly to fit the available canvas width/height,
+		then display it anchored top-left. Draw crosshair and temp rect on the
+		scaled composite so canvas coords match.
+		"""
+		global original_frame, fr, motion_image, last_mouse_move
+	
+		if original_frame is None:
+			return
+	
+		# pick base image depending on current view mode (native video pixels)
+		if show_mode == -1:
+			base = fr.copy() if fr is not None else np.zeros((video_height, video_width, 3), dtype=np.uint8)
+		else:
+			base = motion_image.copy() if motion_image is not None else np.zeros((video_height, video_width, 3), dtype=np.uint8)
+	
+		# draw boxes/grey boxes onto base (works in video/native coords)
+		display = draw_boxes_on_image(base)
+	
+		# initial desired main display size (before final uniform scaling)
+		disp_w = max(1, int(self.display_size[0]))
+		disp_h = max(1, int(self.display_size[1]))
+	
+		# resize main display (native composite size)
+		disp_resized = cv2.resize(display, (disp_w, disp_h), interpolation=cv2.INTER_LINEAR)
+	
+		# --- prepare zoom panes (native size) ---
+		MAG = 2.0
+		MAG_ANIM = 1.0
+	
+		widget_size = max(32, int(disp_h / 3))
+	
+		display_scale = float(video_width) / float(max(1, disp_w))
+		crop_vid = max(2, int(round(widget_size * display_scale / MAG)))
+		crop_vid_anim = max(2, int(round(widget_size * display_scale / MAG_ANIM)))
+	
+		def padded_crop(src, cx, cy, crop_size):
+			h, w = src.shape[:2]
+			x1 = cx - crop_size // 2
+			y1 = cy - crop_size // 2
+			x2 = x1 + crop_size
+			y2 = y1 + crop_size
+			sx1 = max(0, x1); sy1 = max(0, y1)
+			sx2 = min(w, x2); sy2 = min(h, y2)
+			out = np.zeros((crop_size, crop_size, 3), dtype=np.uint8)
+			if sx2 > sx1 and sy2 > sy1:
+				dst_x1 = sx1 - x1
+				dst_y1 = sy1 - y1
+				dst_x2 = dst_x1 + (sx2 - sx1)
+				dst_y2 = dst_y1 + (sy2 - sy1)
+				out[dst_y1:dst_y2, dst_x1:dst_x2] = src[sy1:sy2, sx1:sx2]
+			return out, (x1, y1, x2, y2)
+	
+		# center of interest in video coords
+		if self.last_mouse is not None:
+			try:
+				vx, vy = self.canvas_to_video(self.last_mouse)
+				cx = int(min(max(0, vx), video_width - 1))
+				cy = int(min(max(0, vy), video_height - 1))
+			except Exception:
+				cx, cy = video_width // 2, video_height // 2
+		else:
+			cx, cy = video_width // 2, video_height // 2
+	
+		# ~ # top zoom (static)
+		z_top = None
+		if fr is not None:
+			crop_img, crop_box = padded_crop(fr, cx, cy, crop_vid)
+			z_top = cv2.resize(crop_img, (widget_size, widget_size), interpolation=cv2.INTER_LINEAR)
+			rel_x = cx - crop_box[0]; rel_y = cy - crop_box[1]
+			if 0 <= rel_x < crop_vid and 0 <= rel_y < crop_vid:
+				zx = int(round(rel_x * widget_size / crop_vid))
+				zy = int(round(rel_y * widget_size / crop_vid))
+				cv2.line(z_top, (0, zy), (widget_size-1, zy), (255,255,255), 1)
+				cv2.line(z_top, (zx, 0), (zx, widget_size-1), (255,255,255), 1)
+			cv2.rectangle(z_top, (0, 0), (widget_size-1, widget_size-1), (0, 0, 0), 1)
 		
-	if need_redraw:
-		refresh_display()
+		# mid zoom (motion)
+		z_mid = None
+		if original_frame is not None:
+			crop_img, crop_box = padded_crop(original_frame, cx, cy, crop_vid)
+			z_mid = cv2.resize(crop_img, (widget_size, widget_size), interpolation=cv2.INTER_LINEAR)
+			rel_x = cx - crop_box[0]; rel_y = cy - crop_box[1]
+			if 0 <= rel_x < crop_vid and 0 <= rel_y < crop_vid:
+				zx = int(round(rel_x * widget_size / crop_vid))
+				zy = int(round(rel_y * widget_size / crop_vid))
+				cv2.line(z_mid, (0, zy), (widget_size-1, zy), (255,255,255), 1)
+				cv2.line(z_mid, (zx, 0), (zx, widget_size-1), (255,255,255), 1)
+			cv2.rectangle(z_mid, (0, 0), (widget_size-1, widget_size-1), (0, 0, 0), 1)
+
+		# bottom zoom (animation)
+		z_bot = None
+		if len(raw_buf) == raw_buf.maxlen:
+			idx = int(((time.time() - last_mouse_move) * ANIM_FPS) % raw_buf.maxlen)
+			small = raw_buf[idx]
+			small_crop, crop_box = padded_crop(small, cx, cy, crop_vid_anim)
+			z_bot = cv2.resize(small_crop, (widget_size, widget_size), interpolation=cv2.INTER_LINEAR)
+		else:
+			z_bot = np.zeros((widget_size, widget_size, 3), dtype=np.uint8)
+		# add single-pixel black border to bottom pane as well
+		cv2.rectangle(z_bot, (0, 0), (widget_size-1, widget_size-1), (0, 0, 0), 1)
+
+		gap = 0
+		right_col_w = widget_size
+		right_col_h = widget_size * 3  # no extra gap used here
+		
+		# composite size: main display + immediate right column
+		composite_h = max(disp_h, right_col_h)
+		composite_w = disp_w + right_col_w
+		composite = np.zeros((composite_h, composite_w, 3), dtype=np.uint8)
+		
+		# place main display at top-left (no horizontal gap)
+		composite[0:disp_h, 0:disp_w] = disp_resized
+		
+		# zoom column starts immediately after the main display
+		zoom_x_off = disp_w
+		zoom_y_off = 0
+					
+
+	
+		def place_zoom(zi, x_off, y_off):
+			if zi is None:
+				return
+			h_rem = composite.shape[0] - y_off
+			w_rem = composite.shape[1] - x_off
+			if h_rem <= 0 or w_rem <= 0:
+				return
+			zi_h, zi_w = zi.shape[:2]
+			use_h = min(zi_h, h_rem)
+			use_w = min(zi_w, w_rem)
+			zi_crop = zi[0:use_h, 0:use_w]
+			composite[y_off:y_off+use_h, x_off:x_off+use_w] = zi_crop
+	
+		place_zoom(z_top, zoom_x_off, zoom_y_off)
+		place_zoom(z_mid, zoom_x_off, zoom_y_off + widget_size + gap)
+		place_zoom(z_bot, zoom_x_off, zoom_y_off + 2 * (widget_size + gap))
+	
+		# --- scale composite to fit canvas ---
+		c_w = self.canvas.winfo_width() or 1
+		c_h = self.canvas.winfo_height() or 1
+		scale_w = float(c_w) / float(max(1, composite_w))
+		scale_h = float(c_h) / float(max(1, composite_h))
+		scale = min(scale_w, scale_h) if (scale_w > 0 and scale_h > 0) else 1.0
+		# store for mapping functions
+		self.composite_scale = scale
+	
+		scaled_w = max(1, int(round(composite_w * scale)))
+		scaled_h = max(1, int(round(composite_h * scale)))
+		scaled = cv2.resize(composite, (scaled_w, scaled_h), interpolation=cv2.INTER_LINEAR)
+
+
+		# draw crosshair — but *limit* it to the main display area so it doesn't cross into the zoom column
+		scaled_disp_w = max(1, int(round(disp_w * scale)))
+		scaled_disp_h = max(1, int(round(disp_h * scale)))
+		
+		if self.last_mouse is not None:
+			mx, my = self.last_mouse
+			# only draw if the mouse is inside the scaled main-display region
+			if 0 <= mx < scaled_disp_w and 0 <= my < scaled_disp_h:
+				cv2.line(scaled, (int(mx), 0), (int(mx), scaled_disp_h), (255,255,255), max(1, line_thickness))
+				cv2.line(scaled, (0, int(my)), (scaled_disp_w, int(my)), (255,255,255), max(1, line_thickness))
+		
+	
+		# determine temporary rectangle to draw (if drawing and no explicit temp_rect provided)
+		if temp_rect is None and getattr(self, 'drawing', False):
+			if self.start_canvas_xy is not None and self.last_mouse is not None:
+				temp_rect = (self.start_canvas_xy, self.last_mouse)
+	
+		# draw temporary rect (coordinates are canvas coords; draw onto scaled image)
+		if temp_rect is not None:
+			(sx, sy), (ex, ey) = temp_rect
+			# clip to scaled image
+			rx1 = max(0, min(sx, scaled_w-1)); ry1 = max(0, min(sy, scaled_h-1))
+			rx2 = max(0, min(ex, scaled_w-1)); ry2 = max(0, min(ey, scaled_h-1))
+			cv2.rectangle(scaled, (int(rx1), int(ry1)), (int(rx2), int(ry2)), (255,255,255), max(1, line_thickness))
+	
+		# convert and display
+		self.tk_img = cv2_to_photoimage(scaled)
+		try:
+			self.canvas.config(scrollregion=(0, 0, scaled_w, scaled_h))
+		except Exception:
+			pass
+		self.canvas.delete('all')
+		self.canvas.create_image(0, 0, image=self.tk_img, anchor='nw')
+
+		try:
+			self.draw_seek_ticks()
+		except Exception:
+			pass
+		
+	
+
+	def loop(self):
+		global frame_updated, fr, original_frame, motion_image, raw_buf, last_mouse_move, last_anim_draw, boxes, grey_boxes
+
+		need_ = False
+		now = time.time()
+
+		if frame_updated:
+			frame_updated = False
+			boxes.clear(); grey_boxes.clear()
+			last_frame = frame_number
+			start_frame = last_frame - frameWindow + 1
+			if start_frame < 0:
+				original_frame = np.zeros((video_height, video_width, 3), dtype=np.uint8)
+				fr = original_frame.copy()
+				motion_image = original_frame.copy()
+				raw_buf.clear()
+				need_ = True
+			else:
+				capture.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+				prev_frames = [None] * 3
+				motion_image = None
+				frame_count = 0
+				raw_buf.clear()
+				for i in range(frameWindow):
+					ret, raw_frame = capture.read()
+					if not ret:
+						break
+					if frame_count == 0:
+						fr = raw_frame.copy()
+						if scale_factor != 1.0:
+							fr = cv2.resize(fr, (0,0), fx=scale_factor, fy=scale_factor)
+						raw_buf.append(fr.copy())
+						gray = cv2.cvtColor(fr, cv2.COLOR_BGR2GRAY)
+						if i == 0:
+							prev_frames = [gray.copy()] * 3
+							frame_count += 1
+							if frame_count > frame_skip:
+								frame_count = 0
+							continue
+						diffs = [cv2.absdiff(prev_frames[j], gray) for j in range(3)]
+						if strategy == 'exponential':
+							prev_frames[0] = gray
+							prev_frames[1] = cv2.addWeighted(prev_frames[1], expA, gray, 1-expA, 0)
+							prev_frames[2] = cv2.addWeighted(prev_frames[2], expB, gray, 1-expB, 0)
+						else:
+							prev_frames[2] = prev_frames[1]
+							prev_frames[1] = prev_frames[0]
+							prev_frames[0] = gray
+					frame_count += 1
+					if frame_count > frame_skip:
+						frame_count = 0
+				if 'diffs' in locals():
+					if chromatic_tail_only == 'true':
+						tb = cv2.subtract(diffs[0], diffs[1])
+						tr = cv2.subtract(diffs[2], diffs[1])
+						tg = cv2.subtract(diffs[1], diffs[0])
+						blue = cv2.addWeighted(gray, lum_weight, tb, rgb_multipliers[2], motion_threshold)
+						green = cv2.addWeighted(gray, lum_weight, tg, rgb_multipliers[1], motion_threshold)
+						red = cv2.addWeighted(gray, lum_weight, tr, rgb_multipliers[0], motion_threshold)
+					else:
+						blue = cv2.addWeighted(gray, lum_weight, diffs[0], rgb_multipliers[2], motion_threshold)
+						green = cv2.addWeighted(gray, lum_weight, diffs[1], rgb_multipliers[1], motion_threshold)
+						red = cv2.addWeighted(gray, lum_weight, diffs[2], rgb_multipliers[0], motion_threshold)
+					motion_image = cv2.merge((blue, green, red)).astype(np.uint8)
+					original_frame = motion_image.copy()
+					
+
+					try:
+						base = f"{video_label}_{frame_number}"
+						boxes, grey_boxes = annotation_index.load_labels_for_basename(base, fr, original_frame)
+					except Exception as e:
+						print("Error loading saved annotations for", f"{video_label}_{frame_number},", e)
+				
+					if boxes or grey_boxes:
+						# ~ print('Annotations found')
+						pass
+					else:
+						if auto_ann_switch == 1:
+							auto_annotate_local()
+						need_ = True
+						last_anim_draw = time.time()
+					
+		else:
+			if (now - last_mouse_move) > ANIM_STILL_THRESHOLD and (now - last_anim_draw) >= ANIM_DT:
+				last_anim_draw = now
+				need_ = True
+
+		# recompute display size preserving aspect ratio (main video area only)
+		c_w = self.canvas.winfo_width() or 400
+		c_h = self.canvas.winfo_height() or 300
+		aspect = video_width / video_height
+		if c_w / aspect <= c_h:
+			disp_w = c_w
+			disp_h = int(c_w / aspect)
+		else:
+			disp_h = c_h
+			disp_w = int(c_h * aspect)
+		self.display_size = (max(1, int(disp_w)), max(1, int(disp_h)))
+
+
+		# ensure the temporary rectangle remains visible while mouse is held
+		if getattr(self, 'drawing', False):
+			need_ = True
+
+		if need_:
+			self.redraw()
+
+
+		self.root.after(30, self.loop)
+
+# Launch app
+root = tk.Tk()
+app = AnnotatorTk(root)
+root.mainloop()
 
 capture.release()
-cv2.destroyAllWindows()
-print("Done annotating video: " + video_label)
+print("Done annotating video.")
