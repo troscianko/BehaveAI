@@ -1571,7 +1571,18 @@ class DatasetInspectorTk:
 		except Exception:
 			pass
 
+        # determine temporary rectangle to draw (if drawing and no explicit temp_rect provided)
+		if temp_rect is None and getattr(self, 'drawing', False):
+			if self.start_canvas_xy is not None and self.last_mouse is not None:
+				temp_rect = (self.start_canvas_xy, self.last_mouse)
 
+		# draw temporary rect (coordinates are canvas coords; draw onto scaled image)
+		if temp_rect is not None:
+			(sx, sy), (ex, ey) = temp_rect
+			# clip to scaled image
+			rx1 = max(0, min(sx, scaled_w-1)); ry1 = max(0, min(sy, scaled_h-1))
+			rx2 = max(0, min(ex, scaled_w-1)); ry2 = max(0, min(ey, scaled_h-1))
+			cv2.rectangle(scaled, (int(rx1), int(ry1)), (int(rx2), int(ry2)), (255,255,255), max(1, line_thickness))
 					
 		self.tk_img = cv2_to_photoimage(scaled)
 		try:
