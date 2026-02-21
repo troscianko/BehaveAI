@@ -28,8 +28,12 @@ The framework also supports hierarchical models (e.g. detect something from it's
 
 See the project wiki [here](https://github.com/troscianko/BehaveAI/wiki) for detailed user guide and installation instructions.
 
-## Manuscript:
-[BioRXIV pre-print](https://www.biorxiv.org/content/10.1101/2025.11.04.686536v1)
+## Paper & Citation:
+[PLOS Biology publication](https://doi.org/10.1371/journal.pbio.3003632)
+
+If you use BehaveAI please cite:
+Troscianko, Jolyon, Thomas A. O’Shea-Wheller, James A. M. Galloway, and Kevin J. Gaston. (2026) 'BehaveAI Enables Rapid Detection and Classification of Objects and Behavior from Motion’. _PLOS Biology_ 24, no. 2 (2026): e3003632. https://doi.org/10.1371/journal.pbio.3003632.
+
 
 ## Video Guide (v1.2):
 [<img width="350" alt="Screenshot from 2025-11-04 17-38-49" src="https://github.com/user-attachments/assets/5d76855e-d24f-4107-a6b9-c13aa98e6f79" />](https://www.youtube.com/watch?v=atEL14nxz9s)
