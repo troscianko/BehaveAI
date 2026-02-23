@@ -13,7 +13,10 @@ from collections import deque
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from PIL import Image, ImageTk
-from index_annotations import AnnotationIndex
+try:
+    from behaveai.index_annotations import AnnotationIndex
+except ImportError:
+    from index_annotations import AnnotationIndex
 
 
 # Try to import YOLO

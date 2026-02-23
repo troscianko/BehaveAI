@@ -1,0 +1,27 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "behaveai"
+version = "1.2.1"
+description = "Animal tracking and behaviour classification using YOLO and motion analysis"
+readme = "README.md"
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
+requires-python = ">=3.9"
+dependencies = [
+    "numpy",
+    "pillow",
+    "scipy",
+    "tqdm",
+    "ultralytics",
+    "pyyaml",
+    "opencv-python",
+]
+
+[project.scripts]
+behaveai = "behaveai.BehaveAI:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["behaveai"]

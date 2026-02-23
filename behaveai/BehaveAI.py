@@ -428,7 +428,10 @@ secondary_static_hotkeys = 0
 
 # --------------------- main ---------------------
 
-if __name__ == "__main__":
+def main():
 	root = tk.Tk()
 	app = ScriptRunnerApp(root)
 	root.mainloop()
+
+if __name__ == "__main__":
+	main()

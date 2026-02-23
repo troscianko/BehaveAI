@@ -11,7 +11,10 @@ import time
 from collections import deque
 import sys
 from PIL import Image, ImageTk
-from index_annotations import AnnotationIndex
+try:
+    from behaveai.index_annotations import AnnotationIndex
+except ImportError:
+    from index_annotations import AnnotationIndex
 
 
 # Optional YOLO import
