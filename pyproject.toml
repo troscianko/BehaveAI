@@ -18,6 +18,8 @@ dependencies = [
     "ultralytics",
     "pyyaml",
     "opencv-python",
+    "torch",
+    "torchvision"
 ]
 
 [project.scripts]
