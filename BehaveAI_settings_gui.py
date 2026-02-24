@@ -28,6 +28,7 @@ CLASS_GROUPS = [
 ]
 
 CLASSIFIER_OPTIONS = [
+	'yolo26n.pt', 'yolo26s.pt', 'yolo26m.pt', 'yolo26l.pt',
 	'yolo11n.pt', 'yolo11s.pt', 'yolo11m.pt', 'yolo11l.pt',
 	'yolov8n.pt', 'yolov8s.pt', 'yolov8m.pt', 'yolov8l.pt',
 ]
@@ -617,7 +618,7 @@ class SettingsEditorApp(tk.Tk):
 		ttk.Spinbox(tab3, from_=0.0, to=1.0, increment=0.01, textvariable=self.val_frequency_var, width=6, command=self._set_dirty).grid(row=0, column=1, sticky='w', padx=8)
 
 		ttk.Label(tab3, text='Primary classifier').grid(row=1, column=0, sticky='w', padx=8, pady=(8,0))
-		self.primary_classifier_var = tk.StringVar(value='yolo11n.pt')
+		self.primary_classifier_var = tk.StringVar(value='yolo26n.pt')
 		ttk.Combobox(tab3, values=CLASSIFIER_OPTIONS, textvariable=self.primary_classifier_var).grid(row=1, column=1, sticky='w', padx=8, pady=(8,0))
 		self.primary_classifier_var.trace_add('write', lambda *a: self._set_dirty())
 
@@ -626,7 +627,7 @@ class SettingsEditorApp(tk.Tk):
 		ttk.Spinbox(tab3, from_=1, to=10000, textvariable=self.primary_epochs_var, width=8, command=self._set_dirty).grid(row=2, column=1, sticky='w', padx=8)
 
 		ttk.Label(tab3, text='Secondary classifier').grid(row=3, column=0, sticky='w', padx=8, pady=(6,0))
-		self.secondary_classifier_var = tk.StringVar(value='yolo11n-cls.pt')
+		self.secondary_classifier_var = tk.StringVar(value='yolo26n-cls.pt')
 		secondary_opts = [m.replace('.pt','-cls.pt') for m in CLASSIFIER_OPTIONS if m.startswith('yolo')]
 		ttk.Combobox(tab3, values=secondary_opts, textvariable=self.secondary_classifier_var).grid(row=3, column=1, sticky='w', padx=8)
 		self.secondary_classifier_var.trace_add('write', lambda *a: self._set_dirty())
@@ -801,9 +802,9 @@ class SettingsEditorApp(tk.Tk):
 
 		# model type
 		self.val_frequency_var.set(float(d.get('val_frequency', fallback='0.2')))
-		self.primary_classifier_var.set(d.get('primary_classifier', fallback='yolo11n.pt'))
+		self.primary_classifier_var.set(d.get('primary_classifier', fallback='yolo26n.pt'))
 		self.primary_epochs_var.set(int(d.get('primary_epochs', fallback='100')))
-		self.secondary_classifier_var.set(d.get('secondary_classifier', fallback='yolo11n-cls.pt'))
+		self.secondary_classifier_var.set(d.get('secondary_classifier', fallback='yolo26n-cls.pt'))
 		self.secondary_epochs_var.set(int(d.get('secondary_epochs', fallback='100')))
 		self.use_ncnn_var.set(self._str_to_bool(d.get('use_ncnn', fallback='false')))
 		self.primary_conf_var.set(float(d.get('primary_conf_thresh', fallback='0.5')))

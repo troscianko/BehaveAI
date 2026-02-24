@@ -222,14 +222,6 @@ if strategy == 'exponential':
 
 raw_buf = deque(maxlen=frameWindow)
 
-# ~ # create helper index (so we can use centralized listing/loading)
-# ~ _ann_index = AnnotationIndex(
-	# ~ static_train_images_dir, static_val_images_dir, static_train_labels_dir, static_val_labels_dir,
-	# ~ motion_train_images_dir, motion_val_images_dir, motion_train_labels_dir, motion_val_labels_dir,
-	# ~ motion_cropped_base_dir, static_cropped_base_dir, clips_dir,
-	# ~ primary_static_classes, primary_classes, secondary_classes,
-	# ~ hierarchical_mode
-# ~ )
 
 annotation_index = AnnotationIndex(
 	static_train_images_dir,
@@ -607,10 +599,7 @@ def load_item(idx):
 	item['_orig_secondary_crops'] = orig_crops
 	# ----------------- END: record original secondary crop files for this item -----------------
 
-
 	# try to find and load video preview frames (replicating original sampling behaviour)
-	# ~ video_path_found, guessed_frame = find_video_for_item(item)
-	# ~ video_path_found, guessed_frame = _ann_index.find_video_for_item(item)
 	video_path_found, guessed_frame = annotation_index.find_video_for_item(item)
 	video_capture = None
 	video_frame_index = guessed_frame
@@ -716,8 +705,6 @@ def load_item(idx):
 		except Exception:
 			video_capture = None
 
-
-
 # populate motion_img keys for items (unchanged)
 for it in items:
 	base = it['basename']
@@ -787,13 +774,7 @@ def draw_boxes(frame):
 
 
 def draw_zoom(disp, cursor_pos_in):
-	"""
-	Right-hand zoom column:
-	 - top = static (2x)
-	 - mid  = motion (2x)
-	 - bot  = animation (1x, updates continuously)
-	Uses padded crops so off-screen areas are black.
-	"""
+
 	if cursor_pos_in is None:
 		return
 	cx, cy = cursor_pos_in
@@ -895,8 +876,6 @@ def draw_zoom(disp, cursor_pos_in):
 		if pos_x + zw <= w_disp and y_off + zh <= h_disp:
 			disp[y_off:y_off+zh, pos_x:pos_x+zw] = z_bot[0:zh, 0:zw]
 
-	
-	
 
 def refresh_display():
 	global original_frame, fr, cursor_pos, disp_scale_factor
@@ -931,9 +910,7 @@ def refresh_display():
 	return disp
 
 
-# ---------------------------------------------------------------------------
 # ---------- SAVING: overwrite the *same* files we loaded --------------------
-# ---------------------------------------------------------------------------
 def save_annotation_and_overwrite_current():
 	"""Overwrite the image(s), label(s) and mask(s) for the current item with the modified boxes/grey_boxes.
 	   Respects original origin directories so we don't shuffle train/val assignments.
@@ -941,6 +918,11 @@ def save_annotation_and_overwrite_current():
 	global items, current_idx, fr, original_frame, boxes, grey_boxes, annot_count
 	item = items[current_idx]
 	base = item['basename']
+	
+	deleted = annotation_index.delete_frame(base)
+	if deleted:
+		print("Overwriting existing annotation")
+	
 	# Determine target paths (use origin dirs stored earlier)
 	static_img_dir = item.get('static_origin_img_dir')
 	static_lbl_dir = item.get('static_origin_lbl_dir')
@@ -1044,7 +1026,7 @@ def save_annotation_and_overwrite_current():
 			f.write(mask_content)
 
 
-	# ----------------- BEGIN: create/update secondary crop files for current boxes -----------------
+	# ----------------- create/update secondary crop files for current boxes -----------------
 	# When in hierarchical_mode, write cropped images for each box that has a valid secondary index.
 	try:
 		if hierarchical_mode:
@@ -1109,79 +1091,6 @@ def save_annotation_and_overwrite_current():
 			item['_orig_secondary_crops'] = orig
 	except Exception as e:
 		print(f"Warning during secondary-crop creation: {e}")
-	# ----------------- END: create/update secondary crop files for current boxes -----------------
-
-
-	# ----------------- BEGIN: remove deleted secondary crop files -----------------
-	# Delete any secondary crop images that were present when we loaded this item
-	# but are no longer matched to a surviving box. This removes from both
-	# motion_cropped_base_dir and static_cropped_base_dir locations.
-	try:
-		item = items[current_idx]
-		orig_crops = item.get('_orig_secondary_crops', set())
-		# parse video_label and frame_number from basename
-		if '_' in item['basename']:
-			video_label_part, tail = item['basename'].rsplit('_', 1)
-			try:
-				frame_num = int(tail)
-			except Exception:
-				frame_num = None
-		else:
-			video_label_part = item['basename']
-			frame_num = None
-
-		# build current expected crop file paths from boxes (both motion & static crop dirs)
-		current_crops = set()
-		if hierarchical_mode:
-			for b in boxes:
-				# box format: (x1, y1, x2, y2, primary_cls, secondary_cls, ..., ...)
-				if len(b) >= 6:
-					x1_b = int(round(b[0])); y1_b = int(round(b[1]))
-					primary_idx = b[4]; secondary_idx = b[5]
-					# only consider boxes that have an assigned secondary
-					if secondary_idx is None or secondary_idx < 0:
-						continue
-					# find names
-					if primary_idx is None or primary_idx >= len(primary_classes):
-						continue
-					if secondary_idx >= len(secondary_classes):
-						continue
-					primary_name = primary_classes[primary_idx]
-					secondary_name = secondary_classes[secondary_idx]
-					# expected filename
-					if frame_num is None:
-						continue
-					fname = f"{video_label_part}_{frame_num}_{x1_b}_{y1_b}.jpg"
-					# both crop locations (motion & static) may contain the files
-					m_path = os.path.join(motion_cropped_base_dir, primary_name, secondary_name, fname) if motion_cropped_base_dir else None
-					s_path = os.path.join(static_cropped_base_dir, primary_name, secondary_name, fname) if static_cropped_base_dir else None
-					if m_path: current_crops.add(m_path)
-					if s_path: current_crops.add(s_path)
-
-		# files to delete = orig - current
-		to_delete = orig_crops - current_crops
-		if to_delete:
-			for p in sorted(to_delete):
-				try:
-					if os.path.exists(p):
-						os.remove(p)
-						# try to rmdir parent if empty
-						parent = os.path.dirname(p)
-						try:
-							if os.path.isdir(parent) and not os.listdir(parent):
-								os.rmdir(parent)
-						except Exception:
-							# ignore dir-remove errors (concurrent files etc.)
-							pass
-				except Exception as e:
-					# best-effort: print error but continue
-					print(f"Warning: could not remove crop {p}: {e}")
-		# update stored original set to match current (so subsequent saves are incremental)
-		item['_orig_secondary_crops'] = (orig_crops - to_delete) | (current_crops & orig_crops)  # keep only existing ones
-	except Exception as e:
-		print(f"Warning during secondary-crop cleanup: {e}")
-	# ----------------- END: remove deleted secondary crop files -----------------
-
 
 	print(f"Saved and overwrote annotation for {base}")
 	annot_count += 1
@@ -1515,6 +1424,55 @@ class DatasetInspectorTk:
 			self.update_status()
 			self.redraw()
 			return
+
+		if ks == 'Delete':
+			print("\nWARNING: This will delete ALL files for this frame!")
+			print("Press ENTER to confirm, any other key to cancel...")
+			# Wait for confirmation using a simple key binding approach
+			self.root.bind('<Return>', self.confirm_delete)
+			self.root.bind('<Escape>', self.cancel_delete)
+			self.delete_pending = True
+			return
+
+	def confirm_delete(self, event=None):
+		if hasattr(self, 'delete_pending') and self.delete_pending:
+			# ~ base_filename = f"{video_label}_{frame_number}"
+			# ~ if delete_frame_data(base_filename):
+			item = items[current_idx]
+			base = item['basename']
+			deleted = annotation_index.delete_frame(base)
+			if deleted:
+				# Clear the current display
+				boxes.clear()
+				grey_boxes.clear()
+				print(f"All files for {base} have been deleted")
+				frame_updated = True
+				try:
+					# refresh index and redraw ticks immediately
+					self.refresh_annotation_index_map()
+					self.draw_seek_ticks()
+				except Exception:
+					pass
+				self.redraw()
+			self.delete_pending = False
+			# Remove the temporary key bindings
+			self.root.unbind('<Return>')
+			self.root.unbind('<Escape>')
+			# Prevent the save function from being called
+			return "break"
+
+	def cancel_delete(self, event=None):
+		if hasattr(self, 'delete_pending') and self.delete_pending:
+			print("Deletion cancelled")
+			self.delete_pending = False
+			# Remove the temporary key bindings
+			self.root.unbind('<Return>')
+			self.root.unbind('<Escape>')
+			# Prevent the save function from being called
+			return "break"	
+
+
+
 
 	def key_step(self, delta):
 		global current_idx
