@@ -78,7 +78,7 @@ class TextRedirector:
 # --------------------- main app ---------------------
 
 class ScriptRunnerApp:
-	def __init__(self, root):
+	def __init__(self, root, projects_dir, initial_project=None):
 		self.root = root
 		root.title("BehaveAI Launcher")
 		root.geometry("980x560")
@@ -90,8 +90,8 @@ class ScriptRunnerApp:
 
 
 		# Project storage dir (next to the launcher)
-		self.base_dir = Path(os.getcwd())
-		self.projects_dir = self.base_dir / "projects"
+		self.projects_dir = Path(projects_dir)
+		self.projects_dir.mkdir(parents=True, exist_ok=True)
 		self.projects_dir.mkdir(exist_ok=True)
 
 		self.current_project = None  # Path object or None
@@ -127,11 +127,11 @@ class ScriptRunnerApp:
 		# action buttons (initially disabled: enable after project selection)
 		self.buttons = {}
 		btn_names = [
-			("Settings", "BehaveAI_settings_gui.py"),
-			("Annotate", "BehaveAI_annotation.py"),
-			("Inspect Dataset", "BehaveAI_inspect_dataset.py"),
-			("Train & batch classify", "BehaveAI_classify_track.py"),
-			("Live", "BehaveAI_live.py"),
+			("Settings", "settings_gui.py"),
+			("Annotate", "annotation.py"),
+			("Inspect Dataset", "inspect_dataset.py"),
+			("Train & batch classify", "classify_track.py"),
+			("Live", "live.py"),
 		]
 		for (label_text, script_name) in btn_names:
 			b = Button(self.button_frame, text=label_text,
@@ -207,7 +207,7 @@ class ScriptRunnerApp:
 			return
 
 		# Settings button should always be enabled for a selected project
-		settings_script = "BehaveAI_settings_gui.py"
+		settings_script = "settings_gui.py"
 		for script_name, btn in self.buttons.items():
 			if script_name == settings_script:
 				btn.config(state='normal')
@@ -428,10 +428,19 @@ secondary_static_hotkeys = 0
 
 # --------------------- main ---------------------
 
+def launch(project_path=None, projects_dir=None):
+    from pathlib import Path
+    from platformdirs import user_data_dir
+
+    if projects_dir is None:
+        projects_dir = Path(user_data_dir("BehaveAI")) / "projects"
+
+    root = tk.Tk()
+    app = ScriptRunnerApp(root, projects_dir=projects_dir, initial_project=project_path)
+    root.mainloop()
+
 def main():
-	root = tk.Tk()
-	app = ScriptRunnerApp(root)
-	root.mainloop()
+    launch()
 
 if __name__ == "__main__":
 	main()
