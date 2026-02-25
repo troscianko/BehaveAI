@@ -24,7 +24,14 @@ import configparser
 # -------------------------- utils --------------------------
 
 def is_progress_line(s: str) -> bool:
-	return bool(re.search(r"\d+% *\|", s))
+	# legacy progress bar pattern (kept for older tools)
+	if re.search(r"\d+% *\|", s):
+		return True
+	# Ultralytics-style epoch progress lines: start with "N/M" then later contain "XX%"
+	# ~ if re.search(r"^\s*\d+/\d+\b.*\b\d{1,3}%\b", s):
+	if re.search(r"^[ \t]+\d+/\d+\s", s):
+		return True
+	return False
 
 ansi_escape = re.compile(r'\x1B\[[0-9;?]*[ -/]*[@-~]')
 
@@ -215,16 +222,16 @@ class ScriptRunnerApp:
 		self.project_combo['values'] = projects
 		# keep selection if current project still present
 		if self.current_project and self.current_project.name in projects:
-		    self.project_var.set(self.current_project.name)
-		    self.current_label_var.set(f"Project: {self.current_project.name}")
-		    # enable/disable action buttons depending on settings file
-		    self.update_button_states()
+			self.project_var.set(self.current_project.name)
+			self.current_label_var.set(f"Project: {self.current_project.name}")
+			# enable/disable action buttons depending on settings file
+			self.update_button_states()
 		else:
-		    self.project_var.set('')
-		    self.current_project = None
-		    self.current_label_var.set("(no project selected)")
-		    # no project -> disable everything
-		    self.update_button_states()
+			self.project_var.set('')
+			self.current_project = None
+			self.current_label_var.set("(no project selected)")
+			# no project -> disable everything
+			self.update_button_states()
 
 	def select_project(self, project_name):
 		if not project_name:
@@ -391,17 +398,21 @@ secondary_static_hotkeys = 0
 					continue
 				else:
 					if is_progress_line(line_plain):
-						removed = False
-						for last_tag in ('last_insert_stdout', 'last_insert_stderr'):
-							ranges = self.output_area.tag_ranges(last_tag)
-							if ranges:
-								self.output_area.configure(state='normal')
-								self.output_area.delete(ranges[0], ranges[1])
-								self.output_area.tag_remove(last_tag, "1.0", "end")
-								self.output_area.configure(state='disabled')
-								removed = True
-						rd.write(line_plain + '\n')
-						self.last_progress_global = None
+					    # Overwrite the previous progress line instead of appending a new one.
+					    rd.overwrite(line_plain + '\n')
+					    self.last_progress_global = None
+					# ~ if is_progress_line(line_plain):
+						# ~ removed = False
+						# ~ for last_tag in ('last_insert_stdout', 'last_insert_stderr'):
+							# ~ ranges = self.output_area.tag_ranges(last_tag)
+							# ~ if ranges:
+								# ~ self.output_area.configure(state='normal')
+								# ~ self.output_area.delete(ranges[0], ranges[1])
+								# ~ self.output_area.tag_remove(last_tag, "1.0", "end")
+								# ~ self.output_area.configure(state='disabled')
+								# ~ removed = True
+						# ~ rd.write(line_plain + '\n')
+						# ~ self.last_progress_global = None
 					else:
 						if self.last_progress_global is not None and line_stripped == self.last_progress_global:
 							self.last_progress_global = None

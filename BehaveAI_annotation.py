@@ -710,6 +710,11 @@ def save_annotation():
 	h, w = original_frame.shape[:2]
 	base_filename = f"{video_label}_{frame_number}"
 	
+	## delete any existing annotations for this frame
+	deleted = annotation_index.delete_frame(base_filename)
+	if deleted:
+		print("Overwriting existing annotation")
+	
 	if static_count > 0 or save_empty_frames == 'true': # don't save blank images	
 		static_img_path = os.path.join(static_target_img_dir, f"{base_filename}.jpg")
 		cv2.imwrite(static_img_path, static_ann_frame)	
@@ -858,10 +863,6 @@ class AnnotatorTk:
 		root.geometry(f"{default_w}x{default_h}")
 		root.minsize(900, 600)
 
-		# seek bar
-		# ~ self.seek = ttk.Scale(root, from_=0, to=max(0, total_frames - 1), orient='horizontal', command=self.on_seek)
-		# ~ self.seek.pack(fill='x', padx=4, pady=4)
-
 		# main layout
 		self.main = tk.Frame(root)
 		self.main.pack(fill='both', expand=True)
@@ -888,18 +889,6 @@ class AnnotatorTk:
 		self.frame_var = tk.StringVar(value=str(frame_number))
 		self.frame_label = tk.Label(self.controls, textvariable=self.frame_var, width=8, anchor='w')
 		self.frame_label.pack(side='left', padx=(0,6))
-		
-		# seek bar fills remaining width
-		# ~ self.seek = ttk.Scale(
-			# ~ self.controls,
-			# ~ from_=0,
-			# ~ to=max(0, total_frames - 1),
-			# ~ orient='horizontal',
-			# ~ command=self.on_seek
-		# ~ )
-		# ~ self.seek.pack(side='left', fill='x', expand=True, padx=4)
-		
-		# ~ self.seek.set(frame_number)
 
 		# container for tickline + seek scale so ticks sit *above* the slider
 		self.seek_container = tk.Frame(self.controls)
@@ -921,9 +910,6 @@ class AnnotatorTk:
 			command=self.on_seek
 		)
 		self.seek.pack(fill='x', expand=True)
-		
-
-		
 
 		self.buttons_frame = tk.Frame(self.left)
 		self.buttons_frame.pack(side='bottom', fill='x', pady=(4,4))
@@ -960,9 +946,6 @@ class AnnotatorTk:
 				self.secondary_buttons.append((btn, color_hex, idx))
 				col += 1
 
-		# grey toggle
-		# ~ self.grey_btn = tk.Button(self.buttons_frame, text="Grey (g)", width=10, command=self.toggle_grey)
-		# ~ self.grey_btn.grid(row=2, column=0, padx=2, pady=2)
 
 		# bind events
 		self.canvas.bind('<ButtonPress-1>', self.on_mouse_down)
@@ -1117,19 +1100,6 @@ class AnnotatorTk:
 			pass
 
 
-	# seek
-	# ~ def on_seek(self, val):
-		# ~ global frame_number, frame_updated
-		# ~ try:
-			# ~ frame_number = int(float(val))
-		# ~ except Exception:
-			# ~ frame_number = 0
-		# ~ frame_updated = True
-		# ~ try:
-			# ~ self.frame_var.set(f'Frame {str(frame_number)}')
-		# ~ except Exception:
-			# ~ pass
-
 	def on_seek(self, val):
 		global frame_number, frame_updated
 		try:
@@ -1247,16 +1217,6 @@ class AnnotatorTk:
 		ks = event.keysym
 
 		# Frame step - step larger when Shift is held (event.state & 0x1 tests Shift mask)
-		# ~ if ks == 'Left':
-			# ~ step = -10 if (event.state & 0x1) else -1
-			# ~ self.key_step(step)
-			# ~ return
-		# ~ if ks == 'Right':
-			# ~ step = 10 if (event.state & 0x1) else 1
-			# ~ self.key_step(step)
-			# ~ return
-			
-		# Frame step - step larger when Shift is held (event.state & 0x1 tests Shift mask)
 		# Support CTRL + Left/Right to jump to previous/next annotated frame (event.state & 0x4 tests CTRL mask on X11)
 		if ks == 'Left':
 			# CTRL jump to previous annotated frame
@@ -1338,10 +1298,50 @@ class AnnotatorTk:
 			self.redraw()
 			return
 			
-			
-			
+		if ks == 'Delete':
+			print("\nWARNING: This will delete ALL files for this frame!")
+			print("Press ENTER to confirm, any other key to cancel...")
+			# Wait for confirmation using a simple key binding approach
+			self.root.bind('<Return>', self.confirm_delete)
+			self.root.bind('<Escape>', self.cancel_delete)
+			self.delete_pending = True
 			return
 
+	def confirm_delete(self, event=None):
+		if hasattr(self, 'delete_pending') and self.delete_pending:
+			base_filename = f"{video_label}_{frame_number}"
+			# ~ if delete_frame_data(base_filename):
+			deleted = annotation_index.delete_frame(base_filename)
+			if deleted:
+				# Clear the current display
+				boxes.clear()
+				grey_boxes.clear()
+				print(f"All files for frame {frame_number} have been deleted")
+				frame_updated = True
+				try:
+					# refresh index and redraw ticks immediately
+					self.refresh_annotation_index_map()
+					self.draw_seek_ticks()
+				except Exception:
+					pass
+				self.redraw()
+			self.delete_pending = False
+			# Remove the temporary key bindings
+			self.root.unbind('<Return>')
+			self.root.unbind('<Escape>')
+			# Prevent the save function from being called
+			return "break"
+
+	def cancel_delete(self, event=None):
+		if hasattr(self, 'delete_pending') and self.delete_pending:
+			print("Deletion cancelled")
+			self.delete_pending = False
+			# Remove the temporary key bindings
+			self.root.unbind('<Return>')
+			self.root.unbind('<Escape>')
+			# Prevent the save function from being called
+			return "break"			
+	
 	def key_step(self, delta):
 		global frame_number, frame_updated
 		frame_number = min(max(0, frame_number + delta), total_frames - 1)
@@ -1351,14 +1351,6 @@ class AnnotatorTk:
 	def toggle_show_mode(self):
 		global show_mode
 		show_mode *= -1
-
-	# ~ def key_save(self):
-		# ~ save_annotation()
-		# ~ boxes.clear(); grey_boxes.clear()
-		# ~ global frame_number, frame_updated
-		# ~ frame_number = min(frame_number + 1, total_frames - 1)
-		# ~ frame_updated = True
-		# ~ self.seek.set(frame_number)
 
 	def key_save(self):
 		save_annotation()

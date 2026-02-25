@@ -46,6 +46,8 @@ class AnnotationIndex:
 		self.hierarchical_mode = bool(hierarchical_mode)
 		self.ignore_secondary = set(ignore_secondary or [])
 
+
+
 	# ------------------------------------------------------------------
 	# Build list of annotated images (same behaviour as your inspector)
 	# ------------------------------------------------------------------
@@ -336,3 +338,114 @@ class AnnotationIndex:
 		x2 = int(cx + bw_p/2); y2 = int(cy + bh_p/2)
 		x1 = max(0, min(w-1, x1)); y1 = max(0, min(h-1, y1)); x2 = max(0, min(w-1, x2)); y2 = max(0, min(h-1, y2))
 		return x1, y1, x2, y2
+
+	# ------------------------------------------------------------------
+	# Delete all saved files for a basename (labels, masks, images, original motion images,
+	# and cropped secondary images when hierarchical_mode is enabled).
+	# Returns list of deleted file paths (empty list if none).
+	# ------------------------------------------------------------------
+	def delete_frame(self, base_filename):
+	# ~ def delete_frame(self, base_filename, video_label=None, frame_number=None):
+		deleted = []
+
+		# Label directories
+		label_dirs = [
+			self.static_train_labels_dir,
+			self.static_val_labels_dir,
+			self.motion_train_labels_dir,
+			self.motion_val_labels_dir,
+		]
+
+		# Mask directories are labels -> masks
+		mask_dirs = [d.replace('labels', 'masks') if d else None for d in label_dirs]
+
+		# Image directories
+		image_dirs = [
+			self.static_train_images_dir,
+			self.static_val_images_dir,
+			self.motion_train_images_dir,
+			self.motion_val_images_dir,
+		]
+
+		# File extensions to consider for images
+		image_exts = ('.jpg', '.jpeg', '.png')
+
+		# --- delete label files (.txt) ---
+		for d in label_dirs:
+			if not d:
+				continue
+			p = os.path.join(d, base_filename + '.txt')
+			if os.path.exists(p):
+				try:
+					os.remove(p)
+					deleted.append(p)
+				except Exception:
+					# intentionally continue on errors
+					pass
+
+		# --- delete mask files (.mask.txt) ---
+		for d in mask_dirs:
+			if not d:
+				continue
+			p = os.path.join(d, base_filename + '.mask.txt')
+			if os.path.exists(p):
+				try:
+					os.remove(p)
+					deleted.append(p)
+				except Exception:
+					pass
+
+		# --- delete image files in expected image dirs ---
+		for d in image_dirs:
+			if not d:
+				continue
+			for ext in image_exts:
+				p = os.path.join(d, base_filename + ext)
+				if os.path.exists(p):
+					try:
+						os.remove(p)
+						deleted.append(p)
+					except Exception:
+						pass
+
+		# --- delete 'original' motion images if they exist (keeps parity with annot code) ---
+		for parent in (self.motion_train_images_dir, self.motion_val_images_dir):
+			if not parent:
+				continue
+			od = os.path.join(parent, 'original')
+			if not os.path.isdir(od):
+				continue
+			for ext in image_exts:
+				p = os.path.join(od, base_filename + ext)
+				if os.path.exists(p):
+					try:
+						os.remove(p)
+						deleted.append(p)
+					except Exception:
+						pass
+
+		# --- delete cropped secondary images when hierarchical_mode is enabled ---
+		# These use filenames like: <video_label>_<frame>_<x1>_<y1>.jpg
+		# ~ if self.hierarchical_mode and video_label is not None and frame_number is not None:
+		if self.hierarchical_mode and base_filename is not None:
+			# ~ prefix = f"{video_label}_{frame_number}_"
+			for base_cropped_dir in (self.motion_cropped_base_dir, self.static_cropped_base_dir):
+				if not base_cropped_dir or not os.path.isdir(base_cropped_dir):
+					continue
+				for root, _, files in os.walk(base_cropped_dir):
+					for fname in files:
+						# quick prefix + ext check
+						lf = fname.lower()
+						if not any(lf.endswith(ext) for ext in image_exts):
+							continue
+						# ~ if fname.startswith(prefix):
+						if fname.startswith(base_filename):
+							full = os.path.join(root, fname)
+							if os.path.exists(full):
+								try:
+									os.remove(full)
+									deleted.append(full)
+								except Exception:
+									pass
+
+		return deleted
