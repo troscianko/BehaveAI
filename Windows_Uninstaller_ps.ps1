@@ -1,155 +1,102 @@
 <#
-  BehaveAI - Windows_Uninstaller_ps.ps1 -- safe interactive uninstaller for the BehaveAI/yolo environment
-  This version will NOT remove any scripts in the working directory (e.g. BehaveAI.py).
-  It only removes:
+  BehaveAI - Windows_Uninstaller_ps.ps1 -- safe interactive uninstaller
+  Removes:
     - the virtualenv directory (default: %USERPROFILE%\ultralytics-venv)
-    - the marker file inside the venv (.ultralytics_ready)
-    - the installer transcript/log (Windows_Uninstaller.log) and the uninstaller log
+    - the marker file inside the venv (.behaveai_ready)
+    - the launcher and uninstaller logs
+  Does NOT remove any source files, scripts, or system Python.
 #>
 
-# Fail fast
 $ErrorActionPreference = 'Stop'
 
-# Script folder and log
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $log = Join-Path $scriptDir "Windows_Uninstaller.log"
 if (Test-Path $log) { Remove-Item $log -Force -ErrorAction SilentlyContinue }
 Start-Transcript -Path $log -Force
 
 try {
-    Write-Host "=== Windows_Uninstaller_ps.ps1 (safe mode) ==="
-    Write-Host "This uninstaller will remove the python virtual environment, marker files and logs "
-    Write-Host "It will NOT remove any scripts in this folder - you can delete them yourself"
-    Write-Host "It will also NOT remove system-installed Python."
+    Write-Host "=== Windows_Uninstaller_ps.ps1 ==="
+    Write-Host "This will remove the Python virtual environment, marker files, and logs."
+    Write-Host "It will NOT remove source files/scripts or system Python."
     Write-Host ""
 
-    # Defaults — change here if you used a different venv location
     $defaultVenv = Join-Path $env:USERPROFILE "ultralytics-venv"
     $venvPath = $defaultVenv
 
     if (-not (Test-Path $venvPath)) {
         Write-Host "Virtualenv not found at default location: $venvPath" -ForegroundColor Yellow
-        $manual = Read-Host "If you created the venv elsewhere, enter its full path now (or press Enter to skip)"
+        $manual = Read-Host "Enter the full path to your venv (or press Enter to skip)"
         if ($manual) {
-            if (Test-Path $manual) {
-                $venvPath = $manual
-            } else {
-                Write-Host "Provided path does not exist. Aborting." -ForegroundColor Red
-                Stop-Transcript
-                exit 1
-            }
+            if (Test-Path $manual) { $venvPath = $manual }
+            else { Write-Host "Path does not exist. Aborting." -ForegroundColor Red; Stop-Transcript; exit 1 }
         }
     }
 
-    Write-Host ""
-    Write-Host "Planned actions:"
-    if (Test-Path $venvPath) {
-        Write-Host " - Virtualenv directory: $venvPath"
-    } else {
-        Write-Host " - Virtualenv directory (not found): $venvPath"
-    }
-
-    $marker = Join-Path $venvPath ".ultralytics_ready"
-    if (Test-Path $marker) { Write-Host " - Marker file: $marker" }
-
+    $marker       = Join-Path $venvPath ".behaveai_ready"
+    $launcherLog  = Join-Path $scriptDir "Windows_Launcher_ps.log"
     $installerLog = Join-Path $scriptDir "Windows_Uninstaller.log"
-    if (Test-Path $installerLog) { Write-Host " - Installer transcript/log: $installerLog" }
+
+    Write-Host "Planned actions:"
+    if (Test-Path $venvPath)     { Write-Host " - Virtualenv directory: $venvPath" }
+    if (Test-Path $marker)       { Write-Host " - Marker file: $marker" }
+    if (Test-Path $launcherLog)  { Write-Host " - Launcher log: $launcherLog" }
 
     Write-Host ""
-    $proceed = Read-Host "Do you want to continue and remove the items listed above? (Y/N)"
-    if ($proceed.ToUpper() -ne 'Y') {
-        Write-Host "Aborting uninstall (user cancelled)."
-        Stop-Transcript
-        exit 0
-    }
+    $proceed = Read-Host "Continue and remove the items above? (Y/N)"
+    if ($proceed.ToUpper() -ne 'Y') { Write-Host "Aborting."; Stop-Transcript; exit 0 }
 
-    # Check for running Python processes from this venv (best-effort)
+    # Check for running venv Python processes
     if (Test-Path $venvPath) {
-        Write-Host ""
-        Write-Host "Checking for running Python processes that belong to the virtualenv..."
-        try {
-            $venvPy = Join-Path $venvPath "Scripts\python.exe"
-            if (Test-Path $venvPy) {
+        $venvPy = Join-Path $venvPath "Scripts\python.exe"
+        if (Test-Path $venvPy) {
+            try {
                 $procs = Get-CimInstance Win32_Process | Where-Object {
-                    $_.ExecutablePath -and ($_.ExecutablePath -like "*\python.exe") -and ($_.ExecutablePath -ieq $venvPy)
+                    $_.ExecutablePath -and ($_.ExecutablePath -ieq $venvPy)
                 }
                 if ($procs) {
-                    Write-Host "Found $($procs.Count) running python process(es) from the venv."
-                    $kill = Read-Host "Kill these processes before removing the venv? (Y/N)"
+                    Write-Host "Found $($procs.Count) running venv Python process(es)."
+                    $kill = Read-Host "Kill them before removing the venv? (Y/N)"
                     if ($kill.ToUpper() -eq 'Y') {
                         foreach ($p in $procs) {
-                            try {
-                                Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop
-                                Write-Host "Killed process ID $($p.ProcessId)"
-                            } catch {
-                                Write-Warning "Failed to kill process ID $($p.ProcessId): $_"
-                            }
+                            try { Stop-Process -Id $p.ProcessId -Force; Write-Host "Killed PID $($p.ProcessId)" }
+                            catch { Write-Warning "Could not kill PID $($p.ProcessId): $_" }
                         }
                         Start-Sleep -Seconds 1
                     } else {
-                        Write-Host "Please close those processes and re-run this uninstaller when ready."
-                        Stop-Transcript
-                        exit 1
+                        Write-Host "Close those processes and re-run the uninstaller."
+                        Stop-Transcript; exit 1
                     }
                 } else {
-                    Write-Host "No running venv python processes found."
+                    Write-Host "No running venv processes found."
                 }
-            } else {
-                Write-Host "Venv python executable not found; skipping process check."
-            }
-        } catch {
-            Write-Warning "Error checking running processes: $_"
+            } catch { Write-Warning "Error checking processes: $_" }
         }
-    }
 
-    # Remove venv directory (interactive)
-    if (Test-Path $venvPath) {
-        Write-Host ""
         $delVenv = Read-Host "Remove virtualenv directory '$venvPath'? (Y/N)"
         if ($delVenv.ToUpper() -eq 'Y') {
-            Write-Host "Removing virtualenv directory..."
+            Write-Host "Removing virtualenv..."
             Remove-Item -LiteralPath $venvPath -Recurse -Force -ErrorAction Stop
             Write-Host "Virtualenv removed."
         } else {
-            Write-Host "Skipped removing virtualenv."
+            Write-Host "Skipped virtualenv removal."
         }
     } else {
-        Write-Host "Virtualenv directory not present; nothing to remove."
+        Write-Host "Virtualenv not present; nothing to remove."
     }
 
-    # Remove marker if still present
     if (Test-Path $marker) {
-        try {
-            Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
-            Write-Host "Marker file removed: $marker"
-        } catch {
-            Write-Warning "Failed to remove marker file: $_"
-        }
+        try { Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue; Write-Host "Marker removed." }
+        catch { Write-Warning "Could not remove marker: $_" }
     }
 
-    # Remove installer log (if present)
-    if (Test-Path $installerLog) {
-        $delLog = Read-Host "Remove installer log file '$installerLog'? (Y/N)"
-        if ($delLog.ToUpper() -eq 'Y') {
-            Remove-Item -LiteralPath $installerLog -Force -ErrorAction SilentlyContinue
-            Write-Host "Installer log removed."
-        } else {
-            Write-Host "Left installer log in place."
-        }
+    if (Test-Path $launcherLog) {
+        $delLog = Read-Host "Remove launcher log '$launcherLog'? (Y/N)"
+        if ($delLog.ToUpper() -eq 'Y') { Remove-Item -LiteralPath $launcherLog -Force -ErrorAction SilentlyContinue; Write-Host "Launcher log removed." }
     }
 
     Write-Host ""
-    Write-Host "Uninstall summary:"
-    if (-not (Test-Path $venvPath)) { Write-Host " - Virtualenv: removed or not present" } else { Write-Host " - Virtualenv: still present" }
-    if (-not (Test-Path $installerLog)) { Write-Host " - Installer log: removed or not present" } else { Write-Host " - Installer log: still present" }
-    if (-not (Test-Path $marker)) { Write-Host " - Marker file: removed or not present" } else { Write-Host " - Marker file: still present" }
-
-    Write-Host ""
-    Write-Host "NOTE: This uninstaller intentionally did NOT remove any scripts in this folder (e.g. BehaveAI.py)."
-    Write-Host "If you want to remove those script files manually, delete them using File Explorer or from a shell."
-
-    Write-Host ""
-    Write-Host "Uninstall completed. Uninstaller log: $log"
+    Write-Host "Uninstall complete. Log saved to: $log"
+    Write-Host "Source files and scripts were not touched."
     Stop-Transcript
     exit 0
 }
