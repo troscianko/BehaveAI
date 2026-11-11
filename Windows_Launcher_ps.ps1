@@ -226,7 +226,7 @@ try {
         # (TFLite/litert-torch, ai-edge-quantizer, onnx, ...) whose pins don't resolve on newer
         # Python (e.g. 3.14), sending pip into endless backtracking. BehaveAI only exports to
         # NCNN, which needs just ncnn + pnnx.
-        $packages = @("ultralytics", "numpy", "scipy", "tqdm", "pillow", "opencv-python", "ncnn", "pnnx")
+        $packages = @("ultralytics", "numpy", "scipy", "pyyaml", "tqdm", "pillow", "opencv-python", "ncnn", "pnnx")
         & $venvPython -m pip install $packages
         if ($LASTEXITCODE -ne 0) { throw "pip install of core packages failed" }
 
