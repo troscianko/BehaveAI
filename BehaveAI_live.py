@@ -8,13 +8,17 @@ import threading
 import configparser
 import sys
 from ultralytics import YOLO
-from scipy.optimize import linear_sum_assignment
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 import platform
 import subprocess
+
+# Shared with BehaveAI_classify_track.py so live capture and batch processing track and merge
+# detections identically (single implementations of each - see CLAUDE.md)
+import box_geometry as bg
+from kalman_tracker import KalmanTracker
 
 
 # -------------------------
@@ -236,18 +240,28 @@ try:
 	rgb_multipliers    = [float(x) for x in config['DEFAULT']['rgb_multipliers'].split(',')]
 	primary_conf_thresh   = float(config['DEFAULT'].get('primary_conf_thresh','0.5'))
 	secondary_conf_thresh = float(config['DEFAULT'].get('secondary_conf_thresh','0.5'))
-	match_distance_thresh = float(config['DEFAULT'].get('match_distance_thresh','200'))
-	delete_after_missed   = float(config['DEFAULT'].get('delete_after_missed','5'))
-	centroid_merge_thresh = float(config['DEFAULT'].get('centroid_merge_thresh','50'))
+	# tracking/merge thresholds are ratios of each track/detection's own estimated body scale
+	# (box_geometry.detection_scale), not absolute pixels - same keys and defaults as
+	# BehaveAI_classify_track.py (see kalman_tracker.py)
+	match_distance_ratio  = float(config['DEFAULT'].get('match_distance_ratio','2.5'))
+	delete_after_missed   = float(config['DEFAULT'].get('delete_after_missed','15'))
+	centroid_merge_ratio  = float(config['DEFAULT'].get('centroid_merge_ratio','0.7'))
 	iou_thresh            = float(config['DEFAULT'].get('iou_thresh','0.95'))
+	merge_aware           = config['DEFAULT'].get('merge_aware','true').lower() == 'true'
 	line_thickness        = int(config['DEFAULT'].get('line_thickness','1'))
 	font_size             = float(config['DEFAULT'].get('font_size','0.5'))
 	frame_skip            = int(config['DEFAULT'].get('frame_skip','0'))
 
-	process_noise_pos  = float(config['kalman'].get('process_noise_pos','0.01'))
-	process_noise_vel  = float(config['kalman'].get('process_noise_vel','0.1'))
-	measurement_noise  = float(config['kalman'].get('measurement_noise','0.1'))
+	process_noise_pos_ratio = float(config['kalman'].get('process_noise_pos_ratio','0.05'))
+	process_noise_vel_ratio = float(config['kalman'].get('process_noise_vel_ratio','0.1'))
+	measurement_noise_ratio = float(config['kalman'].get('measurement_noise_ratio','0.1'))
 	motion_threshold   = -1 * int(config['DEFAULT'].get('motion_threshold','0'))
+
+	# Oriented (rotated) boxes - same keys as BehaveAI_classify_track.py. 'oriented boxes with
+	# angles' in the settings GUI additionally sets disambiguate_head_tail, which uses per-class
+	# whole-crop orientation classifiers (trained by the batch tool) to pick the true head end.
+	oriented = config['DEFAULT'].get('box_shape','boxes').lower() == 'oriented'
+	disambiguate_head_tail = oriented and config['DEFAULT'].get('disambiguate_head_tail','false').lower() == 'true'
 
 except KeyError as e:
 	raise KeyError(f"Missing configuration parameter: {e}")
@@ -297,111 +311,66 @@ def save_live_settings(settings_dict):
 		print(f"Warning: could not save live settings: {e}")
 
 # -------------------------
-# Utilities
-# -------------------------
-def iou(box1, box2):
-	xa = max(box1[0], box2[0]); ya = max(box1[1], box2[1])
-	xb = min(box1[2], box2[2]); yb = min(box1[3], box2[3])
-	inter = max(0, xb-xa) * max(0, yb-ya)
-	area1 = (box1[2]-box1[0])*(box1[3]-box1[1]) if box1[2]>box1[0] and box1[3]>box1[1] else 0
-	area2 = (box2[2]-box2[0])*(box2[3]-box2[1]) if box2[2]>box2[0] and box2[3]>box2[1] else 0
-	prop1 = inter/area1 if area1>0 else 0
-	prop2 = inter/area2 if area2>0 else 0
-	return max(prop1, prop2)
-
-
-# -------------------------
 # Tracker
 # -------------------------
-class KalmanTracker:
-	def __init__(self, dist_thresh, max_missed):
-		self.next_id = 1
-		self.tracks = {}
-		self.prev_positions = {}
-		self.dist_thresh = dist_thresh
-		self.max_missed   = max_missed
+def make_tracker():
+	"""A fresh shared tracker (kalman_tracker.KalmanTracker) configured from the project's
+	settings - same parameters as BehaveAI_classify_track.py. Like batch processing, the live
+	loop only runs motion/detection/tracking on every (frame_skip+1)th captured frame, so
+	consecutive update() calls are frame_skip+1 raw frames apart."""
+	return KalmanTracker(match_distance_ratio, delete_after_missed,
+	                     process_noise_pos_ratio, process_noise_vel_ratio, measurement_noise_ratio,
+	                     merge_aware=merge_aware, frames_per_step=frame_skip + 1)
 
-	def _create_kf(self, initial_pt):
-		kf = cv2.KalmanFilter(4,2)
-		kf.transitionMatrix  = np.array([[1,0,1,0],[0,1,0,1],[0,0,1,0],[0,0,0,1]], dtype=np.float32)
-		kf.measurementMatrix = np.array([[1,0,0,0],[0,1,0,0]], dtype=np.float32)
-		kf.processNoiseCov   = np.diag([process_noise_pos, process_noise_pos,
-		                                process_noise_vel, process_noise_vel]).astype(np.float32)
-		kf.measurementNoiseCov = np.eye(2, dtype=np.float32) * measurement_noise
-		kf.statePre  = np.array([[initial_pt[0]],[initial_pt[1]],[0.],[0.]], dtype=np.float32)
-		kf.statePost = kf.statePre.copy()
-		return kf
 
-	def predict_all(self):
-		preds = []
-		for tid, tr in self.tracks.items():
-			pred = tr['kf'].predict()
-			preds.append((tid, (float(pred[0,0]), float(pred[1,0]))))
-		return preds
+# -------------------------
+# Detection parsing (axis-aligned or oriented)
+# -------------------------
+DETECT_TASK = "obb" if oriented else "detect"
 
-	def update(self, detections):
-		preds      = self.predict_all()
-		track_ids  = [t[0] for t in preds]
-		pred_pts   = [t[1] for t in preds]
+def _orient_conf(model, img):
+	"""Probability the given whole crop is in the 'correct' (head-left, tail-right) orientation,
+	per the per-primary-class orientation classifier (same as BehaveAI_classify_track.py)."""
+	if img is None or img.size == 0:
+		return 0.0
+	res = model.predict(img, verbose=False)
+	probs = res[0].probs
+	if probs is None:
+		return 0.0
+	for idx, name in model.names.items():
+		if name == 'correct':
+			return float(probs.data[idx])
+	return 0.0
 
-		if pred_pts and detections:
-			cost = np.zeros((len(pred_pts), len(detections)), dtype=np.float32)
-			for i, p in enumerate(pred_pts):
-				for j, d in enumerate(detections):
-					cost[i,j] = np.hypot(p[0]-d[0], p[1]-d[1])
-			row_idx, col_idx = linear_sum_assignment(cost)
-		else:
-			row_idx = np.array([], dtype=int)
-			col_idx = np.array([], dtype=int)
-			cost    = np.array([])
-
-		assigned_detects = {}; matched_tracks = set(); matched_dets = set()
-
-		for r,c in zip(row_idx, col_idx):
-			if cost[r,c] < self.dist_thresh:
-				tid = track_ids[r]
-				matched_tracks.add(tid); matched_dets.add(c); assigned_detects[c] = tid
-				dpt  = detections[c]
-				meas = np.array([[np.float32(dpt[0])],[np.float32(dpt[1])]])
-				self.tracks[tid]['kf'].correct(meas)
-				self.tracks[tid]['missed'] = 0
-				self.prev_positions[tid]   = (dpt[0], dpt[1])
-
-		for i, dpt in enumerate(detections):
-			if i in matched_dets: continue
-			best_tid, best_dist = None, float('inf')
-			for tid,(px,py) in preds:
-				d = np.hypot(dpt[0]-px, dpt[1]-py)
-				if d < best_dist:
-					best_dist, best_tid = d, tid
-			if best_dist < self.dist_thresh:
-				assigned_detects[i] = best_tid
-				self.tracks[best_tid]['missed'] = 0
-				meas = np.array([[np.float32(dpt[0])],[np.float32(dpt[1])]])
-				self.tracks[best_tid]['kf'].correct(meas)
-				self.prev_positions[best_tid] = (dpt[0], dpt[1])
-				matched_tracks.add(best_tid)
-			else:
-				tid  = self.next_id
-				kf   = self._create_kf(dpt)
-				self.tracks[tid] = {'kf': kf, 'missed': 0}
-				assigned_detects[i] = tid
-				self.prev_positions[tid] = (dpt[0], dpt[1])
-				matched_tracks.add(tid)
-				self.next_id += 1
-
-		for tid in list(self.tracks.keys()):
-			if tid not in matched_tracks:
-				self.tracks[tid]['missed'] += 1
-				noise_scale = min(2.0, 1.0 + self.tracks[tid]['missed'] * 0.2)
-				kf = self.tracks[tid]['kf']
-				new_noise = kf.processNoiseCov.copy(); new_noise *= noise_scale
-				kf.processNoiseCov = new_noise
-				if self.tracks[tid]['missed'] > self.max_missed:
-					del self.tracks[tid]
-					if tid in self.prev_positions: del self.prev_positions[tid]
-
-		return assigned_detects
+def parse_primary_results(result, class_list, source, src_img, ornt_models):
+	"""Turn one primary model result into BehaveAI detection dicts (the input format of
+	box_geometry.merge_source_detections). For oriented projects, 'coords' is the OBB's
+	axis-aligned envelope (used for merge matching) and the true rotated geometry is carried in
+	'head'/'tail'/'width'; the head end is resolved with the class's orientation model when
+	disambiguate_head_tail is on and one exists. All coordinates are in src_img's frame."""
+	dets = []
+	if oriented:
+		obb = result.obb
+		if obb is None:
+			return dets
+		for b in obb:
+			class_name = class_list[int(b.cls[0])]
+			cx_, cy_, bw_, bh_, angle_ = [float(v) for v in b.xywhr[0]]
+			head, tail, width = bg.head_tail_width_from_xywhr_rad(cx_, cy_, bw_, bh_, angle_)
+			model = ornt_models.get(class_name) if disambiguate_head_tail else None
+			if model is not None:
+				head, tail, width = bg.best_head_tail_orientation(src_img, head, tail, width,
+				                                                  lambda img, m=model: _orient_conf(m, img))
+			dets.append({'coords': tuple(map(int, b.xyxy[0].tolist())), 'primary_class': class_name,
+			             'primary_conf': float(b.conf[0]), 'source': source,
+			             'head': head, 'tail': tail, 'width': width})
+	else:
+		if result.boxes is None:
+			return dets
+		for b in result.boxes:
+			dets.append({'coords': tuple(map(int, b.xyxy[0].tolist())), 'primary_class': class_list[int(b.cls[0])],
+			             'primary_conf': float(b.conf[0]), 'source': source})
+	return dets
 
 
 # =========================================================
@@ -460,11 +429,13 @@ class CameraProcessor:
 		self._roi_lock   = threading.Lock()
 
 		# Tracker & models
-		self.tracker = KalmanTracker(match_distance_thresh, delete_after_missed)
+		self.tracker = make_tracker()
 		self.model_static = None
 		self.model_motion = None
 		self.secondary_static_models = {}
 		self.secondary_motion_models = {}
+		self.ornt_static_models = {}   # per-primary-class head/tail orientation classifiers
+		self.ornt_motion_models = {}   # (oriented projects with disambiguate_head_tail only)
 
 		self.prev_frames = None
 
@@ -742,14 +713,14 @@ class CameraProcessor:
 		try:
 			if len(primary_static_classes) > 0 and os.path.exists(primary_static_model_path):
 				if use_ncnn == 'true':
-					self.model_static = load_model_with_ncnn_preference(primary_static_model_path, "detect")
+					self.model_static = load_model_with_ncnn_preference(primary_static_model_path, DETECT_TASK)
 					print("Loaded primary static NCNN model")
 				else:
 					self.model_static = YOLO(primary_static_model_path)
 					print("Loaded primary static YOLO model")
 			if len(primary_motion_classes) > 0 and os.path.exists(primary_motion_model_path):
 				if use_ncnn == 'true':
-					self.model_motion = load_model_with_ncnn_preference(primary_motion_model_path, "detect")
+					self.model_motion = load_model_with_ncnn_preference(primary_motion_model_path, DETECT_TASK)
 					print("Loaded primary motion NCNN model")
 				else:
 					self.model_motion = YOLO(primary_motion_model_path)
@@ -781,10 +752,31 @@ class CameraProcessor:
 							self.secondary_motion_models[p] = load_model_with_ncnn_preference(model_path, "classify")
 							print(f"Loaded secondary motion NCNN model for '{p}'")
 						else:
-							self.secondary_static_models[p] = YOLO(model_path)
+							self.secondary_motion_models[p] = YOLO(model_path)
 							print(f"Loaded secondary motion YOLO model for '{p}'")
 				except Exception as e:
 					print(f"Secondary motion model load failed for {p}: {e}")
+
+		# Head/tail orientation classifiers are trained by the batch tool (Train & batch classify);
+		# live only loads ones that already exist, and falls back to the raw OBB axis otherwise.
+		if disambiguate_head_tail:
+			for p in primary_classes:
+				for stream, classes, store in (('static', primary_static_classes, self.ornt_static_models),
+				                               ('motion', primary_motion_classes, self.ornt_motion_models)):
+					if classes[0] == '0':
+						continue
+					model_path = os.path.join(f"model_ornt_{stream}_{p}", "train", "weights", "best.pt")
+					if not os.path.exists(model_path):
+						continue
+					try:
+						store[p] = (load_model_with_ncnn_preference(model_path, "classify")
+						            if use_ncnn == 'true' else YOLO(model_path))
+						print(f"Loaded {stream} head/tail orientation model for '{p}'")
+					except Exception as e:
+						print(f"Orientation model load failed for {stream} '{p}': {e}")
+			if not (self.ornt_static_models or self.ornt_motion_models):
+				print("Note: 'oriented boxes with angles' is set but no orientation models were found - "
+				      "run Train & batch classify first. Head/tail direction will be arbitrary.")
 
 	def _open_camera(self, timeout=5.0, retry_interval=0.2):
 		deadline = time.time() + float(timeout)
@@ -959,7 +951,7 @@ class CameraProcessor:
 				print("Scheduler: window opened — starting camera.")
 
 			self.camera_status = "starting"
-			self.tracker = KalmanTracker(match_distance_thresh, delete_after_missed)
+			self.tracker = make_tracker()
 
 			# ----------------------------------------------------------
 			# Capture the session start date ONCE here.  All output files
@@ -1029,17 +1021,21 @@ class CameraProcessor:
 		csv_path  = os.path.join(session_output_dir, f"{timestamp_session}_tracking.csv")
 		csv_file  = open(csv_path, 'w', newline='')
 		csv_writer = csv.writer(csv_file)
-		csv_writer.writerow([
+		csv_header = [
 			"frame","date","time","id","x","y",
 			"primary_static_class","primary_static_conf",
 			"primary_motion_class","primary_motion_conf",
 			"secondary_static_class","secondary_static_conf",
 			"secondary_motion_class","secondary_motion_conf"
-		])
+		]
+		if oriented:
+			csv_header += ["angle_deg", "width", "length"]   # same extra columns as batch output
+		csv_writer.writerow(csv_header)
 
 		prev_frames = None
 		frame_idx   = 0
 		frame_count = 0
+		last_processed = None   # results of the last processed frame, redrawn on frame_skip'd frames
 
 		if self.schedule_enabled and self.schedule_start_s is not None:
 			print(f"Session active: "
@@ -1137,164 +1133,149 @@ class CameraProcessor:
 					if elapsed < target: time.sleep(target - elapsed)
 				continue
 
-			# ---- Motion processing ----
-			if primary_motion_classes[0] != '0' or secondary_motion_classes[0] != '0':
-				diffs = [cv2.absdiff(prev_frames[j], yolo_gray) for j in range(3)]
-				if strategy == 'exponential':
-					prev_frames[0] = yolo_gray
-					prev_frames[1] = cv2.addWeighted(prev_frames[1], expA, yolo_gray, 1-expA, 0)
-					prev_frames[2] = cv2.addWeighted(prev_frames[2], expB, yolo_gray, 1-expB, 0)
-				else:
-					prev_frames[2] = prev_frames[1]; prev_frames[1] = prev_frames[0]
-					prev_frames[0] = yolo_gray
-
-				if chromatic_tail_only == 'true':
-					tb = cv2.subtract(diffs[0], diffs[1])
-					tr = cv2.subtract(diffs[2], diffs[1])
-					tg = cv2.subtract(diffs[1], diffs[0])
-					blue  = cv2.addWeighted(yolo_gray, lum_weight, tb, rgb_multipliers[2], motion_threshold)
-					green = cv2.addWeighted(yolo_gray, lum_weight, tg, rgb_multipliers[1], motion_threshold)
-					red   = cv2.addWeighted(yolo_gray, lum_weight, tr, rgb_multipliers[0], motion_threshold)
-				else:
-					blue  = cv2.addWeighted(yolo_gray, lum_weight, diffs[0], rgb_multipliers[2], motion_threshold)
-					green = cv2.addWeighted(yolo_gray, lum_weight, diffs[1], rgb_multipliers[1], motion_threshold)
-					red   = cv2.addWeighted(yolo_gray, lum_weight, diffs[2], rgb_multipliers[0], motion_threshold)
-
-				motion_image = cv2.merge((blue, green, red)).astype(np.uint8)
-			else:
-				motion_image = yolo_frame.copy()
-
-			# ---- Primary detections ----
-			all_detections = []
-			if self.classifier_enabled:
-				if primary_static_classes[0] != '0' and self.model_static is not None:
-					try:
-						results_static = self.model_static.predict(yolo_frame, conf=primary_conf_thresh, verbose=False)
-						for box in results_static[0].boxes:
-							x1,y1,x2,y2 = map(int, box.xyxy[0].tolist())
-							cls_idx = int(box.cls[0]); conf = float(box.conf[0])
-							class_name = primary_static_classes[cls_idx]
-							all_detections.append({'coords':(x1,y1,x2,y2),'primary_class':class_name,
-							                       'primary_conf':conf,'source':'static'})
-					except Exception as e:
-						print("Static model inference error:", e)
-
-				if primary_motion_classes[0] != '0' and self.model_motion is not None:
-					try:
-						results_motion = self.model_motion.predict(motion_image, conf=primary_conf_thresh, verbose=False)
-						for box in results_motion[0].boxes:
-							x1,y1,x2,y2 = map(int, box.xyxy[0].tolist())
-							cls_idx = int(box.cls[0]); conf = float(box.conf[0])
-							class_name = primary_motion_classes[cls_idx]
-							all_detections.append({'coords':(x1,y1,x2,y2),'primary_class':class_name,
-							                       'primary_conf':conf,'source':'motion'})
-					except Exception as e:
-						print("Motion model inference error:", e)
-
-			# ---- Merge detections ----
-			merged_detections = []
-			for det in all_detections:
-				x1,y1,x2,y2 = det['coords']; cx,cy = (x1+x2)//2, (y1+y2)//2
-				matched = False
-				for md in merged_detections:
-					md_cx, md_cy = md['centroid']
-					dist    = np.hypot(cx-md_cx, cy-md_cy)
-					md_x1,md_y1,md_x2,md_y2 = md['coords']
-					overlap = iou((x1,y1,x2,y2),(md_x1,md_y1,md_x2,md_y2))
-					ms_source = md.get('source','')
-					if dist < centroid_merge_thresh or overlap > iou_thresh:
-						if det['source'] == ms_source or dominant_source == 'confidence':
-							if det['primary_conf'] > md.get('primary_conf',0):
-								md['primary_class_combined'] = md.get('primary_class','')
-								md['primary_conf_combined']  = md.get('primary_conf',0)
-								md['primary_class'] = det['primary_class']
-								md['primary_conf']  = det['primary_conf']
-								md['coords'] = det['coords']; md['centroid'] = (cx,cy); md['source'] = det['source']
-						elif det['source'] == 'static' and dominant_source == 'static':
-							md['primary_class_combined'] = md.get('primary_class','')
-							md['primary_conf_combined']  = md.get('primary_conf',0)
-							md['primary_class'] = det['primary_class']
-							md['primary_conf']  = det['primary_conf']
-							md['coords'] = det['coords']; md['centroid'] = (cx,cy); md['source'] = det['source']
-						elif det['source'] == 'motion' and dominant_source == 'motion':
-							md['primary_class_combined'] = md.get('primary_class','')
-							md['primary_conf_combined']  = md.get('primary_conf',0)
-							md['primary_class'] = det['primary_class']
-							md['primary_conf']  = det['primary_conf']
-							md['coords'] = det['coords']; md['centroid'] = (cx,cy); md['source'] = det['source']
-						matched = True; break
-				if not matched:
-					new_det = {'coords':det['coords'], 'centroid':(cx,cy), 'source':det['source'],
-					           'primary_class':det['primary_class'], 'primary_conf':det['primary_conf'],
-					           'primary_class_combined':'', 'primary_conf_combined':0.0}
-					merged_detections.append(new_det)
-
-			# ---- Secondary classification ----
-			processed_detections = []
-			for det in merged_detections:
-				coords  = det['coords']; source = det['source']
-				primary_class = det['primary_class']; primary_conf = det['primary_conf']
-				if source == 'static':
-					det['primary_static_class'] = primary_class; det['primary_static_conf'] = primary_conf
-					det['primary_motion_class'] = det.get('primary_class_combined','')
-					det['primary_motion_conf']  = det.get('primary_conf_combined',0.0)
-				else:
-					det['primary_motion_class'] = primary_class; det['primary_motion_conf'] = primary_conf
-					det['primary_static_class'] = det.get('primary_class_combined','')
-					det['primary_static_conf']  = det.get('primary_conf_combined',0.0)
-
-				if hierarchical_mode:
-					x1,y1,x2,y2 = coords
-					sec_model = None; crop_img = None
-					if source == 'static':
-						if primary_class in self.secondary_static_models:
-							sec_model = self.secondary_static_models.get(primary_class)
-							crop_img  = yolo_frame
-						elif primary_class in self.secondary_motion_models:
-							sec_model = self.secondary_motion_models.get(primary_class)
-							crop_img  = motion_image if primary_motion_classes[0] != '0' else yolo_frame
-					else:
-						if primary_class in self.secondary_motion_models:
-							sec_model = self.secondary_motion_models.get(primary_class)
-							crop_img  = motion_image
-						elif primary_class in self.secondary_static_models:
-							sec_model = self.secondary_static_models.get(primary_class)
-							crop_img  = yolo_frame
-
-					h_img, w_img = (crop_img.shape[:2] if crop_img is not None else (0,0))
-					x1c = max(0, min(w_img-1, int(x1))); x2c = max(0, min(w_img-1, int(x2)))
-					y1c = max(0, min(h_img-1, int(y1))); y2c = max(0, min(h_img-1, int(y2)))
-					crop = None
-					if crop_img is not None and x2c > x1c and y2c > y1c:
-						crop = crop_img[y1c:y2c, x1c:x2c]
-
-					secondary_class = primary_class; secondary_conf = 1.0
-					if sec_model and crop is not None and crop.size > 0:
-						try:
-							sec_results = sec_model.predict(crop, verbose=False)
-							if hasattr(sec_results[0], 'probs') and sec_results[0].probs is not None:
-								idx2           = sec_results[0].probs.top1
-								secondary_conf = sec_results[0].probs.top1conf.item()
-								secondary_class= sec_model.names[idx2]
-						except Exception: pass
-
-					if source == 'static':
-						det['secondary_static_class'] = secondary_class
-						det['secondary_static_conf']  = secondary_conf
-						det['secondary_motion_class'] = ''
-						det['secondary_motion_conf']  = 0.0
-					else:
-						det['secondary_motion_class'] = secondary_class
-						det['secondary_motion_conf']  = secondary_conf
-						det['secondary_static_class'] = ''
-						det['secondary_static_conf']  = 0.0
-
-				processed_detections.append(det)
-
-			# ---- Tracking ----
+			# ---- frame_skip: only every (frame_skip+1)th frame is processed ----
+			# Matches batch processing and annotation: the motion buffers advance, and detection/
+			# merging/secondary classification/tracking run, only on processed frames - so live motion
+			# images match the ones the models were trained on. Skipped frames are still displayed and
+			# recorded at full rate, with the last processed frame's results redrawn on them. A ROI
+			# change forces processing so cached results are never drawn at a stale offset.
 			ox, oy = roi_offset
-			full_cents = [(d['centroid'][0]+ox, d['centroid'][1]+oy) for d in processed_detections]
-			assignment = self.tracker.update(full_cents)
+			process_frame = (frame_count == 0 or last_processed is None
+			                 or last_processed['roi_offset'] != roi_offset
+			                 or last_processed['motion_image'].shape != yolo_frame.shape)
+			if process_frame:
+				frame_count = 0   # (re)start the skip cadence from this frame
+				# ---- Motion processing ----
+				# (secondary_motion_classes is emptied to [] in hierarchical mode when only the static
+				# stream has secondary classes, so it can't be indexed unguarded)
+				if primary_motion_classes[0] != '0' or (secondary_motion_classes and secondary_motion_classes[0] != '0'):
+					diffs = [cv2.absdiff(prev_frames[j], yolo_gray) for j in range(3)]
+					if strategy == 'exponential':
+						prev_frames[0] = yolo_gray
+						prev_frames[1] = cv2.addWeighted(prev_frames[1], expA, yolo_gray, 1-expA, 0)
+						prev_frames[2] = cv2.addWeighted(prev_frames[2], expB, yolo_gray, 1-expB, 0)
+					else:
+						prev_frames[2] = prev_frames[1]; prev_frames[1] = prev_frames[0]
+						prev_frames[0] = yolo_gray
+
+					if chromatic_tail_only == 'true':
+						tb = cv2.subtract(diffs[0], diffs[1])
+						tr = cv2.subtract(diffs[2], diffs[1])
+						tg = cv2.subtract(diffs[1], diffs[0])
+						blue  = cv2.addWeighted(yolo_gray, lum_weight, tb, rgb_multipliers[2], motion_threshold)
+						green = cv2.addWeighted(yolo_gray, lum_weight, tg, rgb_multipliers[1], motion_threshold)
+						red   = cv2.addWeighted(yolo_gray, lum_weight, tr, rgb_multipliers[0], motion_threshold)
+					else:
+						blue  = cv2.addWeighted(yolo_gray, lum_weight, diffs[0], rgb_multipliers[2], motion_threshold)
+						green = cv2.addWeighted(yolo_gray, lum_weight, diffs[1], rgb_multipliers[1], motion_threshold)
+						red   = cv2.addWeighted(yolo_gray, lum_weight, diffs[2], rgb_multipliers[0], motion_threshold)
+
+					motion_image = cv2.merge((blue, green, red)).astype(np.uint8)
+				else:
+					motion_image = yolo_frame.copy()
+
+				# ---- Primary detections ----
+				all_detections = []
+				if self.classifier_enabled:
+					if primary_static_classes[0] != '0' and self.model_static is not None:
+						try:
+							results_static = self.model_static.predict(yolo_frame, conf=primary_conf_thresh, verbose=False)
+							all_detections += parse_primary_results(results_static[0], primary_static_classes, 'static',
+							                                        yolo_frame, self.ornt_static_models)
+						except Exception as e:
+							print("Static model inference error:", e)
+
+					if primary_motion_classes[0] != '0' and self.model_motion is not None:
+						try:
+							results_motion = self.model_motion.predict(motion_image, conf=primary_conf_thresh, verbose=False)
+							all_detections += parse_primary_results(results_motion[0], primary_motion_classes, 'motion',
+							                                        motion_image, self.ornt_motion_models)
+						except Exception as e:
+							print("Motion model inference error:", e)
+
+				# ---- Merge detections ----
+				# Merge static/motion detections into one per physical object, respecting dominant_source -
+				# shared with BehaveAI_classify_track.py and the annotation tool's auto-annotate (box_geometry.py)
+				merged_detections = bg.merge_source_detections(all_detections, centroid_merge_ratio, iou_thresh, dominant_source)
+
+				# ---- Secondary classification ----
+				processed_detections = []
+				for det in merged_detections:
+					coords  = det['coords']; source = det['source']
+					primary_class = det['primary_class']; primary_conf = det['primary_conf']
+					if source == 'static':
+						det['primary_static_class'] = primary_class; det['primary_static_conf'] = primary_conf
+						det['primary_motion_class'] = det.get('primary_class_combined','')
+						det['primary_motion_conf']  = det.get('primary_conf_combined',0.0)
+					else:
+						det['primary_motion_class'] = primary_class; det['primary_motion_conf'] = primary_conf
+						det['primary_static_class'] = det.get('primary_class_combined','')
+						det['primary_static_conf']  = det.get('primary_conf_combined',0.0)
+
+					if hierarchical_mode:
+						x1,y1,x2,y2 = coords
+						sec_model = None; crop_img = None
+						if source == 'static':
+							if primary_class in self.secondary_static_models:
+								sec_model = self.secondary_static_models.get(primary_class)
+								crop_img  = yolo_frame
+							elif primary_class in self.secondary_motion_models:
+								sec_model = self.secondary_motion_models.get(primary_class)
+								crop_img  = motion_image if primary_motion_classes[0] != '0' else yolo_frame
+						else:
+							if primary_class in self.secondary_motion_models:
+								sec_model = self.secondary_motion_models.get(primary_class)
+								crop_img  = motion_image
+							elif primary_class in self.secondary_static_models:
+								sec_model = self.secondary_static_models.get(primary_class)
+								crop_img  = yolo_frame
+
+						h_img, w_img = (crop_img.shape[:2] if crop_img is not None else (0,0))
+						x1c = max(0, min(w_img-1, int(x1))); x2c = max(0, min(w_img-1, int(x2)))
+						y1c = max(0, min(h_img-1, int(y1))); y2c = max(0, min(h_img-1, int(y2)))
+						crop = None
+						if crop_img is not None and oriented and det.get('head') is not None:
+							# same crop style the secondary models were trained on for oriented projects
+							corners = bg.corners_from_head_tail_width(det['head'], det['tail'], det['width'])
+							crop = bg.crop_black_masked(crop_img, corners)
+						elif crop_img is not None and x2c > x1c and y2c > y1c:
+							crop = crop_img[y1c:y2c, x1c:x2c]
+
+						secondary_class = primary_class; secondary_conf = 1.0
+						if sec_model and crop is not None and crop.size > 0:
+							try:
+								sec_results = sec_model.predict(crop, verbose=False)
+								if hasattr(sec_results[0], 'probs') and sec_results[0].probs is not None:
+									idx2           = sec_results[0].probs.top1
+									secondary_conf = sec_results[0].probs.top1conf.item()
+									secondary_class= sec_model.names[idx2]
+							except Exception: pass
+
+						if source == 'static':
+							det['secondary_static_class'] = secondary_class
+							det['secondary_static_conf']  = secondary_conf
+							det['secondary_motion_class'] = ''
+							det['secondary_motion_conf']  = 0.0
+						else:
+							det['secondary_motion_class'] = secondary_class
+							det['secondary_motion_conf']  = secondary_conf
+							det['secondary_static_class'] = ''
+							det['secondary_static_conf']  = 0.0
+
+					processed_detections.append(det)
+
+				# ---- Tracking ----
+				# include each detection's own scale so the tracker gates/sizes its noise relative to body size
+				# instead of absolute pixels (scale is offset-invariant, so ROI-local coords are fine for it)
+				dets_for_tracker = [(d['centroid'][0]+ox, d['centroid'][1]+oy, bg.detection_scale(d))
+				                    for d in processed_detections]
+				assignment = self.tracker.update(dets_for_tracker)
+				last_processed = {'roi_offset': roi_offset, 'motion_image': motion_image,
+				                  'processed_detections': processed_detections, 'assignment': assignment}
+			else:
+				motion_image         = last_processed['motion_image']
+				processed_detections = last_processed['processed_detections']
+				assignment           = last_processed['assignment']
 
 			# ---- Motion display canvas (full-frame, so annotations share coordinates) ----
 			display_mode = self.display_mode
@@ -1327,15 +1308,37 @@ class CameraProcessor:
 				              if primary_cls in primary_classes else (0,255,0)
 				secondary_col = (255,255,255)
 
+				secondary_cls = ''
+				if hierarchical_mode:
+					if sm_class and sm_class != primary_cls:
+						secondary_cls = sm_class
+						secondary_col = secondary_colors[secondary_classes.index(secondary_cls)]
+					if ss_class and ss_class != primary_cls:
+						secondary_cls = ss_class
+						secondary_col = secondary_colors[secondary_classes.index(secondary_cls)]
+
+				# Oriented geometry, shifted from ROI-local to full-frame coordinates
+				corners = head_full = None
+				if oriented and det.get('head') is not None:
+					head_full = (det['head'][0]+ox, det['head'][1]+oy)
+					tail_full = (det['tail'][0]+ox, det['tail'][1]+oy)
+					corners = bg.corners_from_head_tail_width(head_full, tail_full, det['width'])
+
 				for img in draw_targets:
-					if hierarchical_mode:
-						secondary_cls = ''
-						if sm_class and sm_class != primary_cls:
-							secondary_cls = sm_class
-							secondary_col = secondary_colors[secondary_classes.index(secondary_cls)]
-						if ss_class and ss_class != primary_cls:
-							secondary_cls = ss_class
-							secondary_col = secondary_colors[secondary_classes.index(secondary_cls)]
+					if corners is not None:
+						# same look as BehaveAI_classify_track.py's oriented output
+						if hierarchical_mode and primary_cls not in ignore_secondary:
+							outer_th = line_thickness + 2
+							outer_corners = bg.inset_corners(corners, -outer_th)
+							cv2.polylines(img, [np.array(outer_corners, dtype=np.int32)], True, primary_col, outer_th, cv2.LINE_AA)
+							inner_corners = bg.inset_corners(corners, -1)
+							label = [(f"{tid} {primary_cls.upper()} ", primary_col), (secondary_cls, secondary_col)]
+							bg.draw_oriented_box(img, inner_corners, head_full, secondary_col, thickness=line_thickness + 1, label=label)
+						else:
+							label = f"{tid} {primary_cls.upper()}" if hierarchical_mode else f"{tid} {primary_cls}"
+							bg.draw_oriented_box(img, corners, head_full, primary_col, thickness=line_thickness,
+							                     label=label, label_color=primary_col)
+					elif hierarchical_mode:
 						if primary_cls in ignore_secondary:
 							label = f"{tid} {primary_cls.upper()}"
 							ls,_ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_size, line_thickness)
@@ -1367,8 +1370,8 @@ class CameraProcessor:
 						cv2.putText(img, label, (x1, y1-line_thickness*3),
 						            cv2.FONT_HERSHEY_SIMPLEX, font_size, primary_col, line_thickness, cv2.LINE_AA)
 
-					if tid in self.tracker.tracks:
-						sp = self.tracker.tracks[tid]['kf'].statePost
+					sp = self.tracker.tracks[tid]['kf'].statePost if tid in self.tracker.tracks else None
+					if sp is not None and np.all(np.isfinite(sp)):
 						sx,sy = int(sp[0,0]), int(sp[1,0])
 						vx,vy = float(sp[2,0]), float(sp[3,0])
 						nx,ny = int(sx+vx), int(sy+vy)
@@ -1377,17 +1380,24 @@ class CameraProcessor:
 						cv2.circle(img, (nx,ny), 3, light_color, -line_thickness)
 						cv2.circle(img, (int(cx),int(cy)), 3, primary_col, -line_thickness)
 
-				if self.detection_recording_enabled:
+				if self.detection_recording_enabled and process_frame:
 					now = time.localtime()
 					date_str = time.strftime("%Y-%m-%d", now)
 					time_str = time.strftime("%H:%M:%S", now)
-					csv_writer.writerow([
+					csv_row = [
 						frame_idx, date_str, time_str, tid, cx, cy,
 						ps_class, f"{ps_conf:.3f}",
 						pm_class, f"{pm_conf:.3f}",
 						ss_class, f"{ss_conf:.3f}",
 						sm_class, f"{sm_conf:.3f}"
-					])
+					]
+					if oriented:
+						if det.get('head') is not None:
+							angle_deg, length = bg.angle_length_from_head_tail(det['head'], det['tail'])
+							csv_row += [f"{angle_deg:.2f}", f"{det['width']:.2f}", f"{length:.2f}"]
+						else:
+							csv_row += ['', '', '']
+					csv_writer.writerow(csv_row)
 
 			# ROI boundary
 			if roi is not None:
