@@ -5,14 +5,30 @@
 #   ./run-yolo.sh script.py [args...]  # runs a specific script with args
 set -euo pipefail
 
+# If anything fails, keep the terminal window open so the error can be read
+# (otherwise a double-clicked launcher's window closes immediately).
+pause_on_error() {
+  local status=$?
+  if [ "${status}" -ne 0 ] && [ -t 0 ]; then
+    echo
+    echo "Launcher failed (exit code ${status}). Press Enter to close this window."
+    read -r _ || true
+  fi
+}
+trap pause_on_error EXIT
+
 # --- Config ---
 VENV_DIR="${HOME}/ultralytics-venv"
 PYTHON_BIN="/usr/bin/python3"
 # List of apt packages we may need
 APT_PKGS=(python3-venv python3-pip build-essential git wget curl ffmpeg \
           libglib2.0-0 libsm6 libxrender1 libxext6 libjpeg-dev zlib1g-dev \
-          python3-opencv)
-PIP_PKGS=( "ultralytics[export]" numpy tqdm pillow )
+          python3-opencv python3-tk python3-pil.imagetk)
+# NOTE: deliberately NOT "ultralytics[export]" - that extra pulls in every export backend
+# (TFLite/litert-torch, ai-edge-quantizer, onnx, ...) whose pins don't resolve on newer Python
+# (e.g. 3.14), sending pip into endless backtracking. BehaveAI only exports to NCNN, which
+# needs just ncnn + pnnx.
+PIP_PKGS=( ultralytics ncnn pnnx numpy scipy tqdm pillow )
 # A tiny marker file to indicate successful install (optional but nice)
 MARKER="${VENV_DIR}/.ultralytics_ready"
 

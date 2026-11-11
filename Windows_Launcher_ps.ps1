@@ -222,7 +222,11 @@ try {
         }
 
         Write-Host "Installing ultralytics and common dependencies inside venv..."
-        $packages = @("ultralytics[export]", "numpy", "tqdm", "pillow", "opencv-python", "ncnn")
+        # NOTE: deliberately NOT "ultralytics[export]" - that extra pulls in every export backend
+        # (TFLite/litert-torch, ai-edge-quantizer, onnx, ...) whose pins don't resolve on newer
+        # Python (e.g. 3.14), sending pip into endless backtracking. BehaveAI only exports to
+        # NCNN, which needs just ncnn + pnnx.
+        $packages = @("ultralytics", "numpy", "scipy", "tqdm", "pillow", "opencv-python", "ncnn", "pnnx")
         & $venvPython -m pip install $packages
         if ($LASTEXITCODE -ne 0) { throw "pip install of core packages failed" }
 

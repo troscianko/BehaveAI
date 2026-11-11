@@ -1423,6 +1423,17 @@ class DatasetInspectorTk:
 		self.canvas.bind('<B1-Motion>', self.on_mouse_drag)
 		self.canvas.bind('<ButtonRelease-1>', self.on_mouse_up)
 		self.canvas.bind('<Button-3>', self.on_right_click)
+		# Alt+left-click deletes too - an alternative to right-click, which is unreliable on some
+		# macOS mice/trackpads. The more specific <Alt-ButtonPress-1> binding takes precedence over
+		# plain <ButtonPress-1>, so the click doesn't also start drawing a box.
+		self.canvas.bind('<Alt-ButtonPress-1>', self.on_alt_click)
+		if root.tk.call('tk', 'windowingsystem') == 'aqua':
+			# macOS: the Option key reports as Tk's "Option" modifier rather than "Alt", and Tk < 8.7
+			# reports the right mouse button as Button-2 (it became Button-3 from Tk 8.7). macOS-only
+			# because on X11 "Option" (Mod2) is usually NumLock and Button-2 is the middle button.
+			self.canvas.bind('<Option-ButtonPress-1>', self.on_alt_click)
+			if tk.TkVersion < 8.7:
+				self.canvas.bind('<Button-2>', self.on_right_click)
 		self.canvas.bind('<Motion>', self.on_motion)
 
 		root.bind_all('<Key>', self.on_key_all)
@@ -1681,6 +1692,11 @@ class DatasetInspectorTk:
 				else:
 					boxes.append((x1, y1, x2, y2, active_primary, -1))
 		self.redraw()
+
+	def on_alt_click(self, event):
+		"""Alt/Option+left-click: same as right-click (cancel in-progress oriented box, or delete the box under the cursor)."""
+		self.on_right_click(event)
+		return "break"
 
 	def on_right_click(self, event):
 		if oriented and self.cancel_obb_draw():
